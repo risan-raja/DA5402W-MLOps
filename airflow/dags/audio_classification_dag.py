@@ -1,6 +1,6 @@
-from datetime import UTC, datetime
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from airflow.operators.python import PythonOperator

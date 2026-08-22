@@ -2,7 +2,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pytest
 import soundfile as sf
 
 from src.data_pipeline.spark_feature_extractor import (
