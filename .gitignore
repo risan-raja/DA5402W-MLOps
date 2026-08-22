@@ -94,6 +94,7 @@ docker/volumes/
 # Secrets & credentials — never commit
 .env
 .env.*
+!.env.example
 *.pem
 credentials.json
 kaggle.json

@@ -6,8 +6,10 @@ from src.data_pipeline.dataset_downloader import (
     _normalize_targets,
     download_dataset,
     load_config,
+    raw_data_present,
     validate_schema,
 )
+from src.data_processing.versioning import env_flag_enabled
 
 CONFIG = {
     "expected_rows": 4,
@@ -77,6 +79,28 @@ def test_normalize_targets_defaults_and_rejects_unknown():
     assert _normalize_targets(["raw", "interim", "raw"]) == ["raw", "interim"]
     with pytest.raises(ValueError, match="Unknown download target"):
         _normalize_targets(["processed"])
+
+
+def test_raw_data_present_requires_manifest_and_parquet(tmp_path):
+    assert raw_data_present(tmp_path) is False
+
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "part.parquet").write_bytes(b"x")
+    assert raw_data_present(tmp_path) is False
+
+    (tmp_path / ".manifest.json").write_text("{}")
+    assert raw_data_present(tmp_path) is True
+
+
+def test_env_flag_enabled(monkeypatch):
+    monkeypatch.delenv("PUSH_INTERIM", raising=False)
+    assert env_flag_enabled("PUSH_INTERIM") is False
+    monkeypatch.setenv("PUSH_INTERIM", "1")
+    assert env_flag_enabled("PUSH_INTERIM") is True
+    monkeypatch.setenv("PUSH_INTERIM", "true")
+    assert env_flag_enabled("PUSH_INTERIM") is True
+    monkeypatch.setenv("PUSH_INTERIM", "0")
+    assert env_flag_enabled("PUSH_INTERIM") is False
 
 
 @pytest.mark.integration
