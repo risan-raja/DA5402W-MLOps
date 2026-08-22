@@ -3,12 +3,15 @@
 Raw parquet already lives under ``data/`` in ``dataset.hf_repo_id``.
 Upload ``interim/`` (and later ``processed/``) only — never re-push raw.
 
-Push is never automatic. Call ``push_dataset_tree`` only after explicit approval.
+Push is opt-in: call ``push_dataset_tree`` from the CLI, or from the Airflow DAG
+when ``PUSH_INTERIM`` / ``PUSH_PROCESSED`` is set. Preprocess and Spark never
+upload unless that flag is enabled.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import yaml
@@ -18,6 +21,10 @@ logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = ROOT / "config" / "config.yaml"
+
+
+def env_flag_enabled(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes"}
 
 
 def load_full_config(config_path: Path = CONFIG_PATH) -> dict:

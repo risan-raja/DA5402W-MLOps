@@ -17,6 +17,7 @@ x-airflow-common: &airflow-common
     PYTHONPATH: /opt/airflow
     JAVA_HOME: /usr/lib/jvm/java-17
     # Full HF push from the DAG is opt-in (heavy); local extract is the default.
+    PUSH_INTERIM: ${PUSH_INTERIM:-0}
     PUSH_PROCESSED: ${PUSH_PROCESSED:-0}
   volumes:
     - ../airflow/dags:/opt/airflow/dags
