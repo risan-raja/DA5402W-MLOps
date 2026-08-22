@@ -1,0 +1,23 @@
+# See https://pre-commit.com for more information
+default_language_version:
+  python: python3.13
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.4
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  # language: system + explicit uv entry keeps CLI / IDE / hook on the same
+  # pyrefly from `uv sync --group dev` (not a PATH-only binary).
+  - repo: local
+    hooks:
+      - id: pyrefly-check
+        name: Pyrefly (type checking)
+        entry: uv run --group dev pyrefly check
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+        require_serial: true

@@ -1,0 +1,43 @@
+# pyrefly.toml — DA5402W
+
+# Only check app / test / DAG code (once those dirs exist)
+project-includes = [
+    "src",
+    "tests",
+    "airflow/dags",
+]
+
+# Heuristics already skip venv/__pycache__; add project noise
+project-excludes = [
+    "data/**",
+    "report/**",
+    "docker/**",
+    "mlruns/**",
+]
+
+# Repo-root on the path so `from src.data_processing...` matches runtime
+# (cwd / `python -m src...`). Keep `src` for bare `from data_pipeline...` too.
+search-path = [".", "src"]
+
+python-version = "3.13"
+# Cross-platform project: don't prune win32/darwin branches
+python-platform = "all"
+
+# Soft start while scaffolding; bump later to "default" or "strict"
+preset = "basic"
+
+# Prefer .gitignore over hand-maintained excludes
+use-ignore-files = true
+
+# Packages that live in Docker / optional envs, or lack complete stubs —
+# silence missing-import noise for local typecheck without installing them.
+ignore-missing-imports = [
+    "airflow",
+    "airflow.*",
+    "librosa.*",
+    "pyspark.*",
+    "mlflow.*",
+    "optuna.*",
+    "lightgbm.*",
+    "xgboost.*",
+]

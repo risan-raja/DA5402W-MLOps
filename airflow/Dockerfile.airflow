@@ -1,0 +1,21 @@
+FROM apache/airflow:latest-python3.13
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openjdk-17-jre-headless libsndfile1 \
+    && ln -sfn /usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture) /usr/lib/jvm/java-17 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV JAVA_HOME=/usr/lib/jvm/java-17
+
+USER airflow
+
+RUN pip install --no-cache-dir \
+    "pyspark==4.2.0" \
+    "librosa>=1.0.0" \
+    "soundfile>=0.14.0" \
+    "numpy>=2.0.0" \
+    "huggingface-hub>=1.28.0" \
+    "datasets>=5.0.1"
