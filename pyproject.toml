@@ -4,4 +4,34 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "datasets>=5.0.1",
+    "dvc>=3.67.1",
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
+    "huggingface-hub>=1.28.0",
+    "librosa>=1.0.0",
+    "mlflow>=3.15.1",
+    "numpy>=2.5.2",
+    "optuna>=4.9.0",
+    "pandas>=2.3.3",
+    "pathlib>=1.0.1",
+    "prometheus-client>=0.26.0",
+    "pydantic>=2.13.4",
+    "pyspark>=4.2.0",
+    "pytest>=9.1.1",
+    "pyyaml>=6.0.3",
+    "scikit-learn>=1.9.0",
+    "scipy>=1.18.1",
+    "soundfile>=0.14.0",
+    "torch>=2.13.0",
+    "uvicorn>=0.52.4",
+    "xgboost>=3.4.1",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.2",
+    "pyrefly>=1.2.0",
+    "ruff>=0.16.4",
+]
