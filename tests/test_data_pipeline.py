@@ -3,6 +3,7 @@ import pyarrow.dataset as ds
 import pytest
 
 from src.data_pipeline.dataset_downloader import (
+    _normalize_targets,
     download_dataset,
     load_config,
     validate_schema,
@@ -69,6 +70,13 @@ def test_validate_schema_rejects_wrong_class_count():
     )
     with pytest.raises(ValueError, match="Expected 2 classes"):
         validate_schema(table, CONFIG)
+
+
+def test_normalize_targets_defaults_and_rejects_unknown():
+    assert _normalize_targets(None) == ["raw"]
+    assert _normalize_targets(["raw", "interim", "raw"]) == ["raw", "interim"]
+    with pytest.raises(ValueError, match="Unknown download target"):
+        _normalize_targets(["processed"])
 
 
 @pytest.mark.integration

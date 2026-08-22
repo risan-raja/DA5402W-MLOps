@@ -40,7 +40,7 @@ UrbanSound8K has 8,732 labeled clips across 10 classes: air conditioners, car ho
                                                    └─────────────┘                └─────────────┘
 ```
 
-Dataset and model versioning both live on Hugging Face Hub — a public dataset repo (so CI can pull it without secrets) and a separate model repo for trained artifacts. DVC stays in the repo as a documented, secondary versioning path but isn't the primary one. The runtime stack (API, MLflow, Prometheus, Grafana, Airflow) runs in one Docker Compose file.
+Dataset and model versioning both live on Hugging Face Hub — the same public dataset repo as the UrbanSound8K mirror (`risan-raja-iitm/urbansound8K`), with pipeline outputs under `interim/` (later `processed/`), plus a separate model repo for trained artifacts. DVC stays in the repo as a documented, secondary versioning path but isn't the primary one. The runtime stack (API, MLflow, Prometheus, Grafana, Airflow) runs in one Docker Compose file.
 
 LocalExecutor over Celery, PySpark in local mode instead of a separate Spark cluster, and the two-HF-repo versioning setup are explained in `docs/DESIGN.md`.
 
@@ -87,9 +87,17 @@ mlflow ui --port 5000   # view runs, metrics, and the model registry
 **Data and model versioning:**
 
 ```bash
-# Dataset: pushed to a public HF Hub dataset repo
-hf upload <hf-username>/<dataset-repo> data/raw --repo-type dataset
-hf upload <hf-username>/<dataset-repo> data/processed --repo-type dataset
+# Raw stays on upstream risan-raja-iitm/urbansound8K — do not re-upload.
+
+# Dataset repo is the same as raw: risan-raja-iitm/urbansound8K
+# Push interim under interim/ (~1.8 GB). Do not re-upload raw parquet.
+python -m src.data_processing.versioning push data/interim interim
+# later, after Spark: python -m src.data_processing.versioning push data/processed processed
+
+# Pull (raw and/or interim) via the downloader:
+python -m src.data_pipeline.dataset_downloader --target raw
+python -m src.data_pipeline.dataset_downloader --target interim
+python -m src.data_pipeline.dataset_downloader --target raw --target interim
 
 # Models: pushed to an HF Hub model repo
 hf upload <hf-username>/<model-repo> models/ --repo-type model
@@ -141,7 +149,7 @@ Service ports: API on `8000`, MLflow UI on `5000`, Airflow UI on `8080`, Prometh
 DA5402W/
 ├── airflow/            # DAG + custom image (Airflow + Java 17 + PySpark + librosa)
 ├── config/             # config.yaml, logging.yaml
-├── data/                # raw/, processed/, sample_audio/
+├── data/                # raw/ (upstream cache), interim/ (versioned), processed/, sample_audio/
 ├── docker/             # Dockerfile.api, docker-compose.yml, prometheus/
 ├── docs/               # design doc, course brief
 ├── report/             # LaTeX technical report

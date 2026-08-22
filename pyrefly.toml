@@ -15,8 +15,9 @@ project-excludes = [
     "mlruns/**",
 ]
 
-# So `from data_pipeline...` / package imports resolve under src/
-search-path = ["src"]
+# Repo-root on the path so `from src.data_processing...` matches runtime
+# (cwd / `python -m src...`). Keep `src` for bare `from data_pipeline...` too.
+search-path = [".", "src"]
 
 python-version = "3.13"
 # Cross-platform project: don't prune win32/darwin branches

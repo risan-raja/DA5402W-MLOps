@@ -58,8 +58,10 @@ env/
 
 # Dataset — fetched at runtime from Hugging Face Hub, never committed
 data/raw/*
+data/interim/*
 data/processed/*
 !data/raw/.gitkeep
+!data/interim/.gitkeep
 !data/processed/.gitkeep
 !data/sample_audio/
 
