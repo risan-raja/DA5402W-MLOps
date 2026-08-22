@@ -23,7 +23,25 @@ preprocessing:
   label_column: class
   seed: 42
 
+spark:
+  local_processed_dir: data/processed
+  # Keep heap small; throughput comes from batching, not a huge driver.
+  driver_memory: "1g"
+  max_result_size: "512m"
+  master: "local[2]"
+  app_name: urbansound8k-features
+  num_partitions: 2
+  batch_size: 512
+  sample_rate: 16000
+  target_duration_sec: 4.0
+  n_mfcc: 13
+  n_mels: 128
+  n_fft: 1024
+  hop_length: 512
+  mel_frames: 126
+
 versioning:
   # Same repo as dataset.hf_repo_id — do not create a second dataset repo.
-  # Push cleaned/augmented outputs under this prefix only (not raw).
+  # Default push prefix for versioning CLI; Spark uses processed_path_in_repo when --push.
   path_in_repo: interim
+  processed_path_in_repo: processed
