@@ -55,3 +55,41 @@ env/
 *.idx
 *.ind
 *.ilg
+
+# Dataset — fetched at runtime from Hugging Face Hub, never committed
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/sample_audio/
+
+# Models — pushed to the HF model repo directly; DVC manages its own
+# tracked paths via .dvc pointer files (added automatically by `dvc add`)
+models/*
+!models/.gitkeep
+
+# MLflow — regenerable local experiment state, not versioned source
+mlruns/
+mlflow.db
+mlartifacts/
+
+# DVC — cache/tmp are local-only; dvc.yaml, dvc.lock, .dvc files stay tracked
+.dvc/cache
+.dvc/tmp
+
+# Airflow — local runtime state (standalone mode or docker-mounted volumes)
+airflow/logs/
+airflow/airflow.db
+airflow/airflow-webserver.pid
+airflow/standalone_admin_password.txt
+
+# Docker volumes (if bind-mounted locally for postgres/grafana/prometheus data)
+docker/volumes/
+
+# Secrets & credentials — never commit
+.env
+.env.*
+*.pem
+credentials.json
+kaggle.json
+.kaggle/

@@ -4,4 +4,27 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "datasets",
+    "dvc",
+    "fastapi",
+    "httpx",
+    "huggingface-hub",
+    "librosa",
+    "mlflow",
+    "numpy",
+    "optuna",
+    "pandas",
+    "pathlib",
+    "prometheus-client",
+    "pydantic",
+    "pyspark",
+    "pytest",
+    "pyyaml",
+    "scikit-learn",
+    "scipy",
+    "soundfile",
+    "torch",
+    "uvicorn",
+    "xgboost",
+]
