@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "da5402w"
 version = "0.1.0"
@@ -48,7 +52,12 @@ name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
+# Top-level package is the `src/` directory (imports are `from src....`).
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
 [tool.pytest.ini_options]
+pythonpath = ["."]
 markers = [
     "integration: requires network access and HF auth; excluded from CI",
 ]
