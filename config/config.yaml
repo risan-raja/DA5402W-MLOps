@@ -25,10 +25,13 @@ preprocessing:
 
 spark:
   local_processed_dir: data/processed
-  driver_memory: "2g"
-  master: "local[*]"
+  # Keep heap small; throughput comes from batching, not a huge driver.
+  driver_memory: "1g"
+  max_result_size: "512m"
+  master: "local[2]"
   app_name: urbansound8k-features
-  num_partitions: 4
+  num_partitions: 2
+  batch_size: 512
   sample_rate: 16000
   target_duration_sec: 4.0
   n_mfcc: 13

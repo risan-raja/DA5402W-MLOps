@@ -13,6 +13,7 @@ from pathlib import Path
 import librosa
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import soundfile as sf
 import yaml
 from pyspark.sql import Row, SparkSession
@@ -254,9 +255,44 @@ def _finalize_spark_parquet_dir(spark_out_dir: Path, dest_file: Path) -> None:
     if len(parts) == 1:
         shutil.move(str(parts[0]), str(dest_file))
     else:
-        table = pd.read_parquet(spark_out_dir)
-        table.to_parquet(dest_file, index=False)
+        writer = None
+        try:
+            for part in parts:
+                table = pq.read_table(part)
+                if writer is None:
+                    writer = pq.ParquetWriter(dest_file, table.schema, compression="snappy")
+                writer.write_table(table)
+                del table
+        finally:
+            if writer is not None:
+                writer.close()
     shutil.rmtree(spark_out_dir)
+
+
+def _chunked(items: list, size: int):
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
+
+def _stream_merge_files(parts: list[Path], dest_file: Path) -> None:
+    if dest_file.exists():
+        dest_file.unlink()
+    if len(parts) == 1:
+        shutil.move(str(parts[0]), str(dest_file))
+        return
+    writer = None
+    try:
+        for part in parts:
+            table = pq.read_table(part)
+            if writer is None:
+                writer = pq.ParquetWriter(dest_file, table.schema, compression="snappy")
+            writer.write_table(table)
+            del table
+    finally:
+        if writer is not None:
+            writer.close()
+    for part in parts:
+        part.unlink(missing_ok=True)
 
 
 def extract_features(
@@ -299,43 +335,85 @@ def extract_features(
 
     feature_names = tabular_feature_names(n_mfcc=int(spark_cfg["n_mfcc"]))
     processed_dir.mkdir(parents=True, exist_ok=True)
+    work_dir = processed_dir / "_spark_work"
+    if work_dir.exists():
+        shutil.rmtree(work_dir)
+    work_dir.mkdir(parents=True)
 
     os.environ["PYSPARK_PYTHON"] = sys.executable
     os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
 
+    batch_size = int(spark_cfg.get("batch_size", 256))
+    num_partitions = int(spark_cfg.get("num_partitions", 2))
+    driver_memory = spark_cfg.get("driver_memory", "1g")
+    max_result_size = spark_cfg.get("max_result_size", "512m")
+
     spark = (
         SparkSession.builder.master(spark_cfg["master"])
         .appName(spark_cfg["app_name"])
-        .config("spark.driver.memory", spark_cfg.get("driver_memory", "4g"))
+        .config("spark.driver.memory", driver_memory)
+        .config("spark.executor.memory", driver_memory)
+        .config("spark.driver.maxResultSize", max_result_size)
+        .config("spark.sql.shuffle.partitions", str(max(2, num_partitions)))
+        .config("spark.local.dir", str(work_dir / "scratch"))
         .config("spark.pyspark.python", sys.executable)
         .config("spark.pyspark.driver.python", sys.executable)
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("WARN")
-    tab_tmp = processed_dir / "_spark_tabular"
-    mel_tmp = processed_dir / "_spark_mels"
+
+    kept = 0
+    dropped = 0
+    tab_batch_files: list[Path] = []
+    mel_batch_files: list[Path] = []
     try:
-        num_partitions = int(spark_cfg.get("num_partitions", 8))
-        rdd = spark.sparkContext.parallelize(records, num_partitions)
-        extracted = rdd.mapPartitions(lambda part: _extract_partition(part, spark_cfg)).cache()
-        kept = extracted.count()
-        dropped = len(records) - kept
-        if kept == 0:
-            raise ValueError("no clips produced features; check interim audio paths")
+        for batch_idx, batch in enumerate(_chunked(records, batch_size)):
+            logger.info(
+                "Spark batch %s: %s clips (batch_size=%s)",
+                batch_idx,
+                len(batch),
+                batch_size,
+            )
+            parts = min(num_partitions, len(batch))
+            rdd = spark.sparkContext.parallelize(batch, parts)
+            # Cache only this small batch (~batch_size clips), then drop it.
+            extracted = rdd.mapPartitions(
+                lambda part: _extract_partition(part, spark_cfg)
+            ).cache()
+            batch_kept = extracted.count()
+            batch_dropped = len(batch) - batch_kept
+            kept += batch_kept
+            dropped += batch_dropped
+            if batch_kept == 0:
+                extracted.unpersist()
+                continue
 
-        tab_rdd = extracted.map(lambda rec: _to_tabular_row(rec, feature_names))
-        mel_rdd = extracted.map(_to_mel_row)
-        tab_df = spark.createDataFrame(tab_rdd, schema=_tabular_schema(feature_names))
-        mel_df = spark.createDataFrame(mel_rdd, schema=_mel_schema())
+            tab_rdd = extracted.map(lambda rec: _to_tabular_row(rec, feature_names))
+            mel_rdd = extracted.map(_to_mel_row)
+            tab_df = spark.createDataFrame(tab_rdd, schema=_tabular_schema(feature_names))
+            mel_df = spark.createDataFrame(mel_rdd, schema=_mel_schema())
 
-        tab_df.coalesce(1).write.mode("overwrite").parquet(str(tab_tmp))
-        mel_df.coalesce(1).write.mode("overwrite").parquet(str(mel_tmp))
-        extracted.unpersist()
+            tab_tmp = work_dir / f"tab_batch_{batch_idx}"
+            mel_tmp = work_dir / f"mel_batch_{batch_idx}"
+            tab_out = work_dir / f"tabular_batch_{batch_idx}.parquet"
+            mel_out = work_dir / f"mels_batch_{batch_idx}.parquet"
+            tab_df.write.mode("overwrite").parquet(str(tab_tmp))
+            mel_df.write.mode("overwrite").parquet(str(mel_tmp))
+            extracted.unpersist()
+            _finalize_spark_parquet_dir(tab_tmp, tab_out)
+            _finalize_spark_parquet_dir(mel_tmp, mel_out)
+            tab_batch_files.append(tab_out)
+            mel_batch_files.append(mel_out)
     finally:
         spark.stop()
 
-    _finalize_spark_parquet_dir(tab_tmp, tabular_path)
-    _finalize_spark_parquet_dir(mel_tmp, mels_path)
+    if kept == 0 or not tab_batch_files:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        raise ValueError("no clips produced features; check interim audio paths")
+
+    _stream_merge_files(tab_batch_files, tabular_path)
+    _stream_merge_files(mel_batch_files, mels_path)
+    shutil.rmtree(work_dir, ignore_errors=True)
 
     manifest = {
         "created_at": datetime.now(UTC).isoformat(),
@@ -344,6 +422,7 @@ def extract_features(
         "num_input_rows": len(records),
         "num_written": kept,
         "num_dropped": dropped,
+        "batch_size": batch_size,
         "n_mfcc": int(spark_cfg["n_mfcc"]),
         "n_mels": int(spark_cfg["n_mels"]),
         "mel_shape": [int(spark_cfg["n_mels"]), int(spark_cfg["mel_frames"])],

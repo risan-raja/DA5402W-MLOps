@@ -118,6 +118,7 @@ def test_extract_features_spark_end_to_end(tmp_path):
             "master": "local[2]",
             "app_name": "test-features",
             "num_partitions": 2,
+            "batch_size": 2,
             "sample_rate": 16000,
             "target_duration_sec": 4.0,
             "n_mfcc": 13,
@@ -125,7 +126,8 @@ def test_extract_features_spark_end_to_end(tmp_path):
             "n_fft": 1024,
             "hop_length": 512,
             "mel_frames": 126,
-            "driver_memory": "2g",
+            "driver_memory": "1g",
+            "max_result_size": "512m",
         },
         "versioning": {"processed_path_in_repo": "processed"},
     }
