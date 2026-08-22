@@ -68,7 +68,10 @@ data/processed/*
 models/*
 !models/.gitkeep
 
-# MLflow — regenerable local experiment state, not versioned source
+# MLflow — regenerable local experiment state, not versioned source.
+# mlflow/ is bind-mounted into the mlflow container so bare-metal and
+# containerized runs share the same backend store/artifact root.
+mlflow/
 mlruns/
 mlflow.db
 mlartifacts/
@@ -93,3 +96,6 @@ docker/volumes/
 credentials.json
 kaggle.json
 .kaggle/
+
+# Graphify 
+graphify-out/

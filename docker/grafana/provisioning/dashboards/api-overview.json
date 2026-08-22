@@ -1,0 +1,41 @@
+{
+  "title": "API Overview",
+  "uid": "api-overview",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "API up",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "up{job=\"api\"}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Process resident memory",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 9, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "process_resident_memory_bytes{job=\"api\"}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Process CPU seconds (rate)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 9, "x": 15, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "rate(process_cpu_seconds_total{job=\"api\"}[5m])", "refId": "A" }
+      ]
+    }
+  ]
+}

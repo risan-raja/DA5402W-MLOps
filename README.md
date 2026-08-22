@@ -61,7 +61,7 @@ You'll also need Hugging Face Hub credentials (`hf auth login`) — for download
 **Full stack (Airflow, MLflow, Prometheus, Grafana, API) in one command:**
 
 ```bash
-docker-compose -f docker/docker-compose.yml up --build -d
+docker-compose --env-file .env -f docker/docker-compose.yml up --build -d
 ```
 
 **Fetch the dataset:**
@@ -121,7 +121,7 @@ curl http://localhost:8000/metrics
 
 ```bash
 # build and start everything
-docker-compose -f docker/docker-compose.yml up --build -d
+docker-compose --env-file .env -f docker/docker-compose.yml up --build -d
 
 # check status
 docker-compose -f docker/docker-compose.yml ps

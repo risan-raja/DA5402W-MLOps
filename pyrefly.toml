@@ -28,8 +28,11 @@ preset = "basic"
 # Prefer .gitignore over hand-maintained excludes
 use-ignore-files = true
 
-# ML stack often has incomplete / missing stubs — silence only what's noisy
+# Packages that live in Docker / optional envs, or lack complete stubs —
+# silence missing-import noise for local typecheck without installing them.
 ignore-missing-imports = [
+    "airflow",
+    "airflow.*",
     "librosa.*",
     "pyspark.*",
     "mlflow.*",
