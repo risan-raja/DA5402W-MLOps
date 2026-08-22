@@ -58,9 +58,13 @@ def validate_schema(table: ds.Dataset, config: dict) -> dict:
     fold_col = config["fold_column"]
     label_col = config["label_column"]
     if fold_col not in columns:
-        raise ValueError(f"Missing expected column '{fold_col}'. Columns present: {columns}")
+        raise ValueError(
+            f"Missing expected column '{fold_col}'. Columns present: {columns}"
+        )
     if label_col not in columns:
-        raise ValueError(f"Missing expected column '{label_col}'. Columns present: {columns}")
+        raise ValueError(
+            f"Missing expected column '{label_col}'. Columns present: {columns}"
+        )
 
     fold_values = table.to_table(columns=[fold_col]).column(fold_col)
     fold_min, fold_max = config["fold_range"]

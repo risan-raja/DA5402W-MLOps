@@ -111,7 +111,9 @@ def _write_fake_raw(raw_dir: Path, n: int = 4) -> None:
     for i in range(n):
         fold = 10 if i == n - 1 else 1
         name = f"clip{i}.wav"
-        rows["audio"].append({"bytes": _wav_bytes(_sine(sr=22050), 22050), "path": name})
+        rows["audio"].append(
+            {"bytes": _wav_bytes(_sine(sr=22050), 22050), "path": name}
+        )
         rows["slice_file_name"].append(name)
         rows["fsID"].append(100 + i)
         rows["start"].append(0.0)

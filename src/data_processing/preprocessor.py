@@ -124,7 +124,10 @@ def process_raw_to_interim(
     manifest_path = interim_dir / MANIFEST_FILENAME
 
     if metadata_path.exists() and not force:
-        logger.info("Interim metadata already present at %s (pass force=True to redo)", metadata_path)
+        logger.info(
+            "Interim metadata already present at %s (pass force=True to redo)",
+            metadata_path,
+        )
         with open(manifest_path) as f:
             return json.load(f)
 
@@ -175,7 +178,9 @@ def process_raw_to_interim(
             label = batch_dict[label_column][i]
             class_id = int(batch_dict["classID"][i])
             audio_struct = batch_dict["audio"][i]
-            audio_bytes = audio_struct["bytes"] if isinstance(audio_struct, dict) else None
+            audio_bytes = (
+                audio_struct["bytes"] if isinstance(audio_struct, dict) else None
+            )
 
             try:
                 y, sr = decode_audio_bytes(audio_bytes)
@@ -262,7 +267,9 @@ def process_raw_to_interim(
         "num_dropped": dropped,
         "num_train_rows": len(train_df),
         "num_eval_rows": len(eval_df),
-        "class_counts_all": class_counts(frame.loc[~frame["is_augmented"]], label_column),
+        "class_counts_all": class_counts(
+            frame.loc[~frame["is_augmented"]], label_column
+        ),
     }
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
