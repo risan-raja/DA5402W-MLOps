@@ -1,0 +1,9 @@
+dataset:
+  hf_repo_id: risan-raja-iitm/urbansound8K
+  hf_repo_type: dataset
+  local_raw_dir: data/raw
+  expected_rows: 8732
+  fold_range: [1, 10]
+  fold_column: fold
+  label_column: class
+  expected_num_classes: 10

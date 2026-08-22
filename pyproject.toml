@@ -47,3 +47,8 @@ name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: requires network access and HF auth; excluded from CI",
+]
+
