@@ -1,7 +1,8 @@
 from datetime import UTC, datetime
 
-from airflow import DAG
 from airflow.operators.python import PythonOperator
+
+from airflow import DAG
 
 
 def ping() -> None:

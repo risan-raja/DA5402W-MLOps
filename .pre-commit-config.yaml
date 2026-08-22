@@ -10,11 +10,14 @@ repos:
         args: [--fix]
       - id: ruff-format
 
-  - repo: https://github.com/facebook/pyrefly-pre-commit
-    rev: 1.2.0
+  # language: system + explicit uv entry keeps CLI / IDE / hook on the same
+  # pyrefly from `uv sync --group dev` (not a PATH-only binary).
+  - repo: local
     hooks:
       - id: pyrefly-check
         name: Pyrefly (type checking)
-        pass_filenames: false
-        # Use the project venv's pyrefly (uv sync --group dev) so CLI/IDE/hook stay aligned
+        entry: uv run --group dev pyrefly check
         language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+        require_serial: true
