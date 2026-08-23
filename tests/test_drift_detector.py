@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tests.config_helpers import write_app_config
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -37,6 +35,7 @@ from src.monitoring.drift_detector import (
     with_confidence_samples,
     with_feature_histograms,
 )
+from tests.config_helpers import write_app_config
 from tests.test_api import _wav_bytes, _write_tabular_winner
 
 REPO_CONFIG = Path(__file__).resolve().parents[1] / "config" / "config.yaml"

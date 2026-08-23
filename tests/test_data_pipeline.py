@@ -3,8 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from tests.config_helpers import write_app_config
-
 import pyarrow as pa
 import pyarrow.dataset as ds
 import pytest
@@ -29,6 +27,7 @@ from src.data_processing.versioning import (
     resolve_model_repo_id,
     versioning_push_enabled,
 )
+from tests.config_helpers import write_app_config
 
 CONFIG: DatasetConfig | dict[str, object] = {
     "expected_rows": 4,

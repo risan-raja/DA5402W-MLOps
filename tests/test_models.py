@@ -4,8 +4,6 @@ import math
 import os
 from pathlib import Path
 
-from tests.config_helpers import write_app_config
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -39,6 +37,7 @@ from src.models.train import (
     select_winner_from_artifacts,
     winner_payload,
 )
+from tests.config_helpers import write_app_config
 
 
 def _synthetic_tabular(n_per_fold: int = 4) -> pd.DataFrame:
