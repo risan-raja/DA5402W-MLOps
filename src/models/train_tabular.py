@@ -6,10 +6,10 @@ import logging
 from pathlib import Path
 
 import joblib
+import mlflow
 import optuna
 from mlflow.models import infer_signature
 
-import mlflow
 from src.models.baseline_model import fit_predict_proba, suggest_params
 from src.models.cross_validation import aggregate_fold_metrics, log_cv_results
 from src.models.data import (
@@ -173,7 +173,6 @@ def train_tabular_model(
         signature = infer_signature(x_ev_s[:5], proba[:5])
         log_sklearn_family_model(model_name, model, signature)
 
-
         cv_cfg = train_cfg.get("cv") or {}
         if cv_cfg.get("enabled"):
             n_folds = int(cv_cfg.get("n_folds", 10))
@@ -185,12 +184,8 @@ def train_tabular_model(
                 "Running UrbanSound8K %s-fold eval CV for %s", n_folds, model_name
             )
             for test_fold, cv_train_folds in iter_us8k_cv_folds(n_folds):
-                train_df = filter_split(
-                    tabular, cv_train_folds, include_augmented=True
-                )
-                test_df = filter_split(
-                    tabular, [test_fold], include_augmented=False
-                )
+                train_df = filter_split(tabular, cv_train_folds, include_augmented=True)
+                test_df = filter_split(tabular, [test_fold], include_augmented=False)
                 x_tr_cv, y_tr_cv = tabular_xy(train_df, feat_cols, cv_label_to_id)
                 x_te_cv, y_te_cv = tabular_xy(test_df, feat_cols, cv_label_to_id)
                 fold_scaler = fit_scaler(x_tr_cv)

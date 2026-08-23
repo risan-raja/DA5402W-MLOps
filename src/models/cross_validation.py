@@ -6,9 +6,9 @@ import math
 from pathlib import Path
 from typing import Any
 
+import mlflow
 import numpy as np
 
-import mlflow
 from src.models.mlflow_logging import save_json
 
 # Metrics aggregated across folds (subset of compute_metrics keys).

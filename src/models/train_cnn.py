@@ -6,12 +6,12 @@ import logging
 import math
 from pathlib import Path
 
+import mlflow
 import mlflow.pytorch
 import numpy as np
 import optuna
 import torch
 
-import mlflow
 from src.models.cnn_model import (
     ensure_resnet18_weights,
     suggest_cnn_params,
@@ -214,7 +214,6 @@ def train_resnet_model(
             input_example=example,
         )
 
-
         cv_cfg = train_cfg.get("cv") or {}
         if cv_cfg.get("enabled"):
             n_folds = int(cv_cfg.get("n_folds", 10))
@@ -223,12 +222,8 @@ def train_resnet_model(
             fold_rows: list[dict] = []
             logger.info("Running UrbanSound8K %s-fold eval CV for resnet18", n_folds)
             for test_fold, cv_train_folds in iter_us8k_cv_folds(n_folds):
-                train_df = filter_split(
-                    mels_df, cv_train_folds, include_augmented=True
-                )
-                test_df = filter_split(
-                    mels_df, [test_fold], include_augmented=False
-                )
+                train_df = filter_split(mels_df, cv_train_folds, include_augmented=True)
+                test_df = filter_split(mels_df, [test_fold], include_augmented=False)
                 x_tr_cv, y_tr_cv = _xy_mels(train_df, cv_label_to_id)
                 x_te_cv, y_te_cv = _xy_mels(test_df, cv_label_to_id)
                 fold_stats = fit_mel_stats(x_tr_cv)

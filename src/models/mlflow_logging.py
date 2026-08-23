@@ -10,6 +10,7 @@ import tempfile
 import time
 from pathlib import Path
 
+import mlflow
 import mlflow.lightgbm
 import mlflow.pytorch
 import mlflow.sklearn
@@ -21,8 +22,6 @@ from mlflow.data.http_dataset_source import HTTPDatasetSource
 from mlflow.data.meta_dataset import MetaDataset
 from mlflow.exceptions import MlflowException
 from mlflow.tracking import MlflowClient
-
-import mlflow
 
 logger = logging.getLogger(__name__)
 

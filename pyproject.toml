@@ -72,3 +72,8 @@ markers = [
     "integration: requires network access and HF auth; excluded from CI",
 ]
 
+# Local `mlflow/` tracking dir is gitignored; without this, ruff isort treats the
+# package name as first-party on developer machines and disagrees with CI.
+[tool.ruff.lint.isort]
+known-third-party = ["mlflow"]
+
