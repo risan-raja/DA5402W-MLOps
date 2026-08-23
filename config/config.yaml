@@ -63,7 +63,7 @@ training:
   # train_folds: [1, 2]
   val_fold: 9
   eval_fold: 10
-  n_trials: 2
+  n_trials: 5
   # Official UrbanSound8K 10-fold eval CV (after Optuna). Off by default for fast iteration.
   cv:
     enabled: true
