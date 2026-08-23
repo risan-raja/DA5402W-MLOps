@@ -200,7 +200,7 @@ def resolve_artifact_dir(
     pull: bool,
     cache: Path,
 ) -> tuple[Path, str]:
-    """Return (artifact_dir, model_name)."""
+    """Resolve winner/ or a named model dir, optionally pulling from Hub."""
     payload = winner_payload(models_root)
     winner_dir = models_root / "winner"
     winner_family = infer_family(winner_dir)

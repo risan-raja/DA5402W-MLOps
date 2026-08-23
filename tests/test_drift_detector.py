@@ -1,5 +1,3 @@
-"""Unit tests for KS/PSI drift scoring and the rolling monitor."""
-
 from __future__ import annotations
 
 import json

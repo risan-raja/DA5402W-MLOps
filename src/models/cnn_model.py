@@ -119,8 +119,6 @@ def predict_proba(
         MelDataset(mels, np.zeros(len(mels), dtype=np.int64)),
         batch_size=batch_size,
         shuffle=False,
-        # num_workers=2,
-        # pin_memory=True,
     )
     probs: list[np.ndarray] = []
     for xb, _ in loader:
@@ -162,8 +160,6 @@ def train_resnet(
         MelDataset(mels_train, y_train),
         batch_size=batch_size,
         shuffle=True,
-        # num_workers=4,
-        # pin_memory=True,
     )
 
     best_state = copy.deepcopy(model.state_dict())

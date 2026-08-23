@@ -43,7 +43,6 @@ def load_versioning_config(config_path: Path = CONFIG_PATH) -> dict:
 
 
 def versioning_push_enabled(key: str, config_path: Path = CONFIG_PATH) -> bool:
-    """Return whether ``versioning.<key>`` is enabled (e.g. ``push_interim``)."""
     return bool(load_versioning_config(config_path).get(key, False))
 
 
@@ -54,7 +53,6 @@ def config_enabled(
     default: bool = True,
     config_path: Path = CONFIG_PATH,
 ) -> bool:
-    """Return a boolean flag from any config section (missing key uses ``default``)."""
     cfg = load_full_config(config_path).get(section) or {}
     return bool(cfg.get(key, default))
 

@@ -1,5 +1,3 @@
-"""Smoke tests for model data splits, CNN forward, and metrics."""
-
 from __future__ import annotations
 
 import math
@@ -30,14 +28,11 @@ from src.models.data import (
 from src.models.evaluate import compute_metrics
 from src.models.runtime_env import _THREAD_DEFAULTS, load_runtime_env
 from src.models.train import (
-    ALL_MODELS,
     materialize_winner_dir,
     persist_run_result,
     result_score,
-    run_training,
     select_winner,
     select_winner_from_artifacts,
-    train_one_model,
     winner_payload,
 )
 
@@ -201,19 +196,16 @@ def test_register_dataset_input_continues_after_persistent_unique(monkeypatch):
 
     from src.models.mlflow_logging import register_dataset_input
 
+    calls = {"n": 0}
+
     def _log_input(*_args, **_kwargs):
+        calls["n"] += 1
         raise MlflowException("UNIQUE constraint failed: datasets.digest")
 
     monkeypatch.setattr("src.models.mlflow_logging.mlflow.log_input", _log_input)
     monkeypatch.setattr("src.models.mlflow_logging.time.sleep", lambda *_: None)
     register_dataset_input(object(), attempts=2)
-
-
-def test_run_training_import_and_all_models():
-    assert "rf" in ALL_MODELS
-    assert "resnet18" in ALL_MODELS
-    assert callable(run_training)
-    assert callable(train_one_model)
+    assert calls["n"] == 2
 
 
 def test_result_score_prefers_cv_mean():

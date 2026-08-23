@@ -13,7 +13,6 @@ hint() { printf '         %s\n' "$1"; }
 
 FAILED=0
 
-# --- OS detection ---
 UNAME_S="$(uname -s)"
 case "${UNAME_S}" in
   Darwin) OS_LABEL="macOS" ;;
@@ -27,7 +26,6 @@ esac
 echo "Detected OS: ${OS_LABEL}"
 echo
 
-# --- Python ≥ 3.13 ---
 PYTHON_BIN=""
 for candidate in python3 python; do
   if command -v "${candidate}" >/dev/null 2>&1; then
@@ -51,7 +49,6 @@ else
   fi
 fi
 
-# --- uv ---
 if command -v uv >/dev/null 2>&1; then
   ok "uv $(uv --version 2>/dev/null | head -n1)"
 else
@@ -59,7 +56,6 @@ else
   hint "Install: https://docs.astral.sh/uv/getting-started/installation/"
 fi
 
-# --- Java ≥ 17 (PySpark) ---
 java_major() {
   # java -version writes to stderr; accept "17.0.x" or legacy "1.8.0_xxx"
   local raw
@@ -94,7 +90,6 @@ else
   fi
 fi
 
-# --- Docker (warn-only) ---
 if command -v docker >/dev/null 2>&1; then
   if docker compose version >/dev/null 2>&1; then
     ok "Docker + docker compose"
@@ -107,7 +102,6 @@ else
   hint "Needed for make compose (API / MLflow / monitoring), not for training alone"
 fi
 
-# --- Hugging Face auth (warn-only) ---
 HF_OK=0
 if [[ -n "${HF_TOKEN:-}" ]]; then
   HF_OK=1

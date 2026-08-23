@@ -52,11 +52,7 @@ def jsonable_params(params: dict) -> dict:
 
 
 def log_dataset_lineage(lineage: dict, *, model_name: str | None = None) -> MetaDataset:
-    """Attach dataset provenance and register an MLflow Dataset input.
-
-    Returns the MetaDataset so metrics can be logged with ``dataset=...``
-    (fills the Metrics table Dataset column in the MLflow UI).
-    """
+    """Log dataset provenance params/tags and register an MLflow Dataset input."""
     scalar_keys = (
         "hf_repo_id",
         "hf_repo_type",
@@ -170,7 +166,7 @@ def log_optuna_study(
     *,
     dataset: MetaDataset | None = None,
 ) -> None:
-    """Full Optuna report on the parent run (trials table + best summary)."""
+    """Log Optuna trials table and best-trial summary on the parent run."""
     mlflow.log_metric("optuna_best_value", float(study.best_value), dataset=dataset)
     mlflow.log_param("optuna_best_trial", int(study.best_trial.number))
     mlflow.log_param("optuna_n_trials", len(study.trials))
