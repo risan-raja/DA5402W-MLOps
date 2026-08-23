@@ -1,7 +1,7 @@
 REPO := $(abspath .)
 export PYTHONPATH := $(REPO)
 
-.PHONY: airflow airflow-init compose compose-down
+.PHONY: airflow airflow-init compose compose-down pull-winner
 
 airflow-init:
 	mkdir -p $(REPO)/.airflow
@@ -20,3 +20,6 @@ compose:
 
 compose-down:
 	docker compose --env-file .env -f docker/docker-compose.yml down
+
+pull-winner:
+	$(REPO)/.venv/bin/python -m src.data_processing.versioning pull-winner $(REPO)/models

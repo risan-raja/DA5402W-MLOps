@@ -231,6 +231,31 @@ def pull_dataset_tree(
     return local_dir
 
 
+def pull_winner_artifacts(
+    models_dir: Path | str,
+    *,
+    repo_id: str | None = None,
+    repo_type: str | None = None,
+    revision: str | None = None,
+    config_path: Path = CONFIG_PATH,
+) -> Path:
+    """Download ``winner.json`` and ``winner/`` into ``models_dir``."""
+    default_repo_id, default_repo_type = resolve_model_repo_id(config_path)
+    repo_id = repo_id or default_repo_id
+    repo_type = repo_type or default_repo_type
+    models_dir = Path(models_dir)
+    models_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_download(
+        repo_id=repo_id,
+        repo_type=repo_type,
+        revision=revision,
+        local_dir=str(models_dir),
+        allow_patterns=["winner.json", "winner/**"],
+    )
+    logger.info("Pulled winner artifacts from %s into %s", repo_id, models_dir)
+    return models_dir
+
+
 def main() -> None:
     import argparse
 
@@ -279,6 +304,15 @@ def main() -> None:
     )
     push_winner_p.add_argument("--private", action="store_true")
 
+    pull_winner_p = sub.add_parser(
+        "pull-winner", help="Download winner.json + winner/ from the model repo"
+    )
+    pull_winner_p.add_argument(
+        "models_dir", type=Path, nargs="?", default=ROOT / "models"
+    )
+    pull_winner_p.add_argument("--repo-id", default=None)
+    pull_winner_p.add_argument("--revision", default=None)
+
     args = parser.parse_args()
     if args.command == "push":
         push_dataset_tree(
@@ -296,6 +330,12 @@ def main() -> None:
         )
     elif args.command == "push-models":
         push_all_trained_models(args.models_dir, private=args.private)
+    elif args.command == "pull-winner":
+        pull_winner_artifacts(
+            args.models_dir,
+            repo_id=args.repo_id,
+            revision=args.revision,
+        )
     else:
         push_winner_artifacts(args.models_dir, private=args.private)
 

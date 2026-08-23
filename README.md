@@ -103,6 +103,7 @@ python -m src.data_pipeline.dataset_downloader --target raw --target interim
 # Models: risan-raja-iitm/urbansound8k-models (all four dirs, then winner last)
 python -m src.data_processing.versioning push-models models
 python -m src.data_processing.versioning push-winner models
+make pull-winner   # winner.json + winner/ from the model repo into models/
 
 # DVC: kept as a documented alternative, local remote
 dvc add models/
@@ -125,7 +126,7 @@ curl -X POST http://localhost:8000/predict \
 curl http://localhost:8000/metrics
 ```
 
-`/predict` accepts a `.wav` file and returns the predicted class plus confidence score. Malformed or non-`.wav` uploads return a structured error.
+`/predict` accepts a `.wav` file and returns the predicted class, confidence, `model_name`, `latency_ms`, and the 10-class `probabilities` map. Malformed, oversized, or non-`.wav` uploads return a structured error. If no winner is loaded, `/predict` returns 503 while `/health` stays 200.
 
 ## Docker execution
 

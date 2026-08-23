@@ -5,8 +5,14 @@ services:
       dockerfile: docker/Dockerfile.api
     ports:
       - "8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      DA5402W_CONFIG: /app/config/config.yaml
+      DA5402W_MODELS_DIR: /app/models
     volumes:
       - ../models:/app/models:ro
+      - ../config:/app/config:ro
       - ../data/sample_audio:/app/data/sample_audio:ro
     restart: unless-stopped
 

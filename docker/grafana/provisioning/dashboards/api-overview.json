@@ -3,7 +3,7 @@
   "uid": "api-overview",
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "15s",
   "time": { "from": "now-1h", "to": "now" },
   "panels": [
@@ -19,22 +19,25 @@
     },
     {
       "id": 2,
-      "title": "Process resident memory",
+      "title": "Predict request rate",
       "type": "timeseries",
       "gridPos": { "h": 6, "w": 9, "x": 6, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
       "targets": [
-        { "expr": "process_resident_memory_bytes{job=\"api\"}", "refId": "A" }
+        { "expr": "rate(predict_requests_total{job=\"api\"}[5m])", "refId": "A" }
       ]
     },
     {
       "id": 3,
-      "title": "Process CPU seconds (rate)",
+      "title": "Predict latency p95",
       "type": "timeseries",
       "gridPos": { "h": 6, "w": 9, "x": 15, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
       "targets": [
-        { "expr": "rate(process_cpu_seconds_total{job=\"api\"}[5m])", "refId": "A" }
+        {
+          "expr": "histogram_quantile(0.95, rate(predict_latency_seconds_bucket{job=\"api\"}[5m]))",
+          "refId": "A"
+        }
       ]
     }
   ]

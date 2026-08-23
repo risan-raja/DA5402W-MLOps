@@ -12,11 +12,11 @@ import pandas as pd
 import yaml
 from sklearn.preprocessing import StandardScaler
 
-from src.data_pipeline.spark_feature_extractor import (
-    MELS_FILENAME,
-    TABULAR_FILENAME,
-    tabular_feature_names,
+from src.data_pipeline.audio_features import (
+    normalize_mels as _normalize_mels,
 )
+from src.data_pipeline.audio_features import tabular_feature_names
+from src.data_pipeline.spark_feature_extractor import MELS_FILENAME, TABULAR_FILENAME
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = ROOT / "config" / "config.yaml"
@@ -72,7 +72,9 @@ def collect_dataset_lineage(
     cfg = full_config or load_full_config()
     dataset_cfg = cfg.get("dataset", {})
 
-    interim_dir = Path(cfg.get("preprocessing", {}).get("local_interim_dir", "data/interim"))
+    interim_dir = Path(
+        cfg.get("preprocessing", {}).get("local_interim_dir", "data/interim")
+    )
     if not interim_dir.is_absolute():
         interim_dir = ROOT / interim_dir
     raw_dir = Path(dataset_cfg.get("local_raw_dir", "data/raw"))
@@ -207,7 +209,7 @@ def fit_mel_stats(mels: np.ndarray) -> dict[str, float]:
 
 
 def normalize_mels(mels: np.ndarray, stats: dict[str, float]) -> np.ndarray:
-    return ((mels - stats["mean"]) / stats["std"]).astype(np.float32)
+    return _normalize_mels(mels, stats)
 
 
 def split_frames(
@@ -223,6 +225,7 @@ def split_frames(
     eval_df = filter_split(frame, [eval_fold], include_augmented=False)
     return optuna_train, val, refit, eval_df
 
+
 def iter_us8k_cv_folds(n_folds: int = 10) -> Iterator[tuple[int, list[int]]]:
     """Yield ``(test_fold, train_folds)`` for official UrbanSound8K fold CV.
 
@@ -234,4 +237,3 @@ def iter_us8k_cv_folds(n_folds: int = 10) -> Iterator[tuple[int, list[int]]]:
     for test_fold in folds:
         train_folds = [f for f in folds if f != test_fold]
         yield test_fold, train_folds
-

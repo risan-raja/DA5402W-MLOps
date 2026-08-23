@@ -4,13 +4,15 @@ import numpy as np
 import pandas as pd
 import soundfile as sf
 
-from src.data_pipeline.spark_feature_extractor import (
-    extract_clip_features,
-    extract_features,
+from src.data_pipeline.audio_features import (
     extract_log_mel,
     extract_tabular_features,
     pad_or_truncate,
     tabular_feature_names,
+)
+from src.data_pipeline.spark_feature_extractor import (
+    extract_clip_features,
+    extract_features,
 )
 
 

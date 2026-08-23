@@ -14,6 +14,7 @@ from src.data_pipeline.dataset_downloader import (
 from src.data_processing.versioning import (
     TRAINED_MODEL_DIRS,
     config_enabled,
+    pull_winner_artifacts,
     push_all_trained_models,
     push_winner_artifacts,
     resolve_model_repo_id,
@@ -172,6 +173,28 @@ def test_push_all_trained_models_uploads_each_dir(tmp_path, monkeypatch):
     monkeypatch.setattr("src.data_processing.versioning.push_model_tree", _fake_push)
     push_all_trained_models(models_dir, config_path=cfg)
     assert uploaded == list(TRAINED_MODEL_DIRS)
+
+
+def test_pull_winner_artifacts_downloads_allow_patterns(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "dataset:\n  hf_repo_id: example/ds\n"
+        "versioning:\n  hf_model_repo_id: org/models\n  hf_model_repo_type: model\n"
+    )
+    dest = tmp_path / "models"
+    called: dict = {}
+
+    def _fake_snapshot(**kwargs):
+        called.update(kwargs)
+        Path(kwargs["local_dir"]).mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(
+        "src.data_processing.versioning.snapshot_download", _fake_snapshot
+    )
+    pull_winner_artifacts(dest, config_path=cfg)
+    assert called["repo_id"] == "org/models"
+    assert called["allow_patterns"] == ["winner.json", "winner/**"]
+    assert dest.is_dir()
 
 
 def test_dag_project_root_is_repo_root():
