@@ -12,9 +12,18 @@ import json
 import logging
 import shutil
 from pathlib import Path
+from typing import cast
 
+import pandas as pd
 from mlflow.tracking import MlflowClient
 
+from src.artifact_types import (
+    DatasetLineage,
+    LineageStub,
+    TrainResult,
+    WinnerPayload,
+)
+from src.config_types import AppConfig, SparkConfig, TrainingConfig, TrainingCvConfig
 from src.models.baseline_model import TABULAR_MODELS
 from src.models.data import (
     collect_dataset_lineage,
@@ -27,7 +36,7 @@ from src.models.runtime_env import ROOT
 from src.models.train_cnn import train_resnet_model
 from src.models.train_tabular import train_tabular_model
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 CONFIG_PATH = ROOT / "config" / "config.yaml"
 ALL_MODELS = ("rf", "xgboost", "lightgbm", "resnet18")
@@ -35,14 +44,16 @@ WINNER_DIRNAME = "winner"
 RUN_RESULT_FILENAME = "run_result.json"
 
 
-def result_score(result: dict) -> float:
-    metrics = result.get("metrics") or {}
+def result_score(result: TrainResult | dict[str, object]) -> float:
+    metrics: dict[str, float] = cast(
+        dict[str, float], result.get("metrics") or {}
+    )
     if "cv_f1_macro_mean" in metrics:
         return float(metrics["cv_f1_macro_mean"])
     return float(metrics.get("f1_macro", float("-inf")))
 
 
-def _lineage_stub(lineage: dict) -> dict:
+def _lineage_stub(lineage: DatasetLineage) -> LineageStub:
     return {
         "hf_repo_id": lineage.get("hf_repo_id"),
         "processed_created_at": lineage.get("processed_created_at"),
@@ -50,9 +61,9 @@ def _lineage_stub(lineage: dict) -> dict:
     }
 
 
-def winner_payload(result: dict, lineage: dict) -> dict:
-    metrics = result.get("metrics") or {}
-    payload = {
+def winner_payload(result: TrainResult, lineage: DatasetLineage) -> WinnerPayload:
+    metrics: dict[str, float] = result.get("metrics") or {}
+    payload: WinnerPayload = {
         "model_name": result["model_name"],
         "f1_macro": metrics.get("f1_macro"),
         "run_id": result.get("run_id"),
@@ -68,17 +79,17 @@ def winner_payload(result: dict, lineage: dict) -> dict:
     return payload
 
 
-def persist_run_result(result: dict, lineage: dict) -> Path:
-    out_dir = Path(result["out_dir"])
-    payload = {**result, "dataset": _lineage_stub(lineage)}
-    path = out_dir / RUN_RESULT_FILENAME
+def persist_run_result(result: TrainResult, lineage: DatasetLineage) -> Path:
+    out_dir: Path = Path(result["out_dir"])
+    payload: dict[str, object] = {**result, "dataset": _lineage_stub(lineage)}
+    path: Path = out_dir / RUN_RESULT_FILENAME
     save_json(path, payload)
     return path
 
 
 def materialize_winner_dir(models_dir: Path, winner_name: str) -> Path:
-    source = models_dir / winner_name
-    dest = models_dir / WINNER_DIRNAME
+    source: Path = models_dir / winner_name
+    dest: Path = models_dir / WINNER_DIRNAME
     if not source.is_dir():
         raise FileNotFoundError(source)
     if dest.exists():
@@ -87,19 +98,21 @@ def materialize_winner_dir(models_dir: Path, winner_name: str) -> Path:
     return dest
 
 
-def tag_mlflow_winners(results: list[dict], winner: dict) -> None:
+def tag_mlflow_winners(
+    results: list[TrainResult], winner: TrainResult
+) -> None:
     try:
-        client = MlflowClient()
+        client: MlflowClient = MlflowClient()
     except Exception:
         logger.exception("MLflow client unavailable; skipping winner tags")
         return
     for result in results:
-        is_winner = result["model_name"] == winner["model_name"]
+        is_winner: bool = result["model_name"] == winner["model_name"]
         try:
             versions = client.search_model_versions(f"name='{result['model_name']}'")
             run_versions = [v for v in versions if v.run_id == result["run_id"]]
             if run_versions:
-                ver = run_versions[0].version
+                ver: str = run_versions[0].version
                 client.set_model_version_tag(
                     result["model_name"],
                     ver,
@@ -118,21 +131,21 @@ def tag_mlflow_winners(results: list[dict], winner: dict) -> None:
 
 
 def select_winner(
-    results: list[dict], models_dir: Path, lineage: dict
-) -> dict:
+    results: list[TrainResult], models_dir: Path, lineage: DatasetLineage
+) -> TrainResult:
     if not results:
         raise ValueError("no training results to select a winner from")
-    winner = max(results, key=result_score)
+    winner: TrainResult = max(results, key=result_score)
     tag_mlflow_winners(results, winner)
-    payload = winner_payload(winner, lineage)
+    payload: WinnerPayload = winner_payload(winner, lineage)
     save_json(models_dir / "winner.json", payload)
     materialize_winner_dir(models_dir, winner["model_name"])
     logger.info("Winner: %s (score=%s)", winner["model_name"], result_score(winner))
     return winner
 
 
-def _resolve_models_dir(train_cfg: dict) -> Path:
-    models_dir = Path(train_cfg["models_dir"])
+def _resolve_models_dir(train_cfg: TrainingConfig | dict[str, object]) -> Path:
+    models_dir: Path = Path(str(train_cfg["models_dir"]))
     if not models_dir.is_absolute():
         models_dir = ROOT / models_dir
     train_cfg["models_dir"] = str(models_dir)
@@ -143,28 +156,37 @@ def _prepare_training(
     config_path: Path,
     n_trials: int | None,
     enable_cv: bool | None,
-) -> tuple[dict, dict, dict, int, int, Path, Path, dict]:
-    full = load_full_config(config_path)
-    train_cfg = dict(full["training"])
+) -> tuple[
+    AppConfig,
+    TrainingConfig | dict[str, object],
+    SparkConfig | dict[str, object],
+    int,
+    int,
+    Path,
+    Path,
+    DatasetLineage,
+]:
+    full: AppConfig = load_full_config(config_path)
+    train_cfg: TrainingConfig | dict[str, object] = dict(full["training"])
     if enable_cv is not None:
-        cv_cfg = dict(train_cfg.get("cv") or {})
+        cv_cfg: TrainingCvConfig | dict[str, object] = dict(train_cfg.get("cv") or {})
         cv_cfg["enabled"] = bool(enable_cv)
         train_cfg["cv"] = cv_cfg
-    spark_cfg = full.get("spark", {})
-    seed = int(train_cfg.get("seed", 42))
-    trials = int(n_trials if n_trials is not None else train_cfg.get("n_trials", 20))
+    spark_cfg: SparkConfig | dict[str, object] = full.get("spark", {})
+    seed: int = int(train_cfg.get("seed", 42))
+    trials: int = int(n_trials if n_trials is not None else train_cfg.get("n_trials", 20))
 
-    processed_dir = Path(train_cfg["processed_dir"])
+    processed_dir: Path = Path(str(train_cfg["processed_dir"]))
     if not processed_dir.is_absolute():
         processed_dir = ROOT / processed_dir
-    models_dir = _resolve_models_dir(train_cfg)
-    artifact_root = Path(train_cfg["mlflow_artifact_root"])
+    models_dir: Path = _resolve_models_dir(train_cfg)
+    artifact_root: Path = Path(str(train_cfg["mlflow_artifact_root"]))
     if not artifact_root.is_absolute():
         artifact_root = ROOT / artifact_root
     train_cfg["mlflow_artifact_root"] = str(artifact_root)
 
     ensure_mlflow(train_cfg)
-    lineage = collect_dataset_lineage(processed_dir, full_config=full)
+    lineage: DatasetLineage = collect_dataset_lineage(processed_dir, full_config=full)
     logger.info(
         "Dataset lineage: hf=%s processed_at=%s tabular_sha=%s",
         lineage.get("hf_repo_id"),
@@ -177,14 +199,14 @@ def _prepare_training(
 def _fit_named_model(
     name: str,
     *,
-    train_cfg: dict,
-    spark_cfg: dict,
-    tabular,
-    mels_df,
+    train_cfg: TrainingConfig | dict[str, object],
+    spark_cfg: SparkConfig | dict[str, object],
+    tabular: pd.DataFrame | None,
+    mels_df: pd.DataFrame | None,
     n_trials: int,
     seed: int,
-    lineage: dict,
-) -> dict:
+    lineage: DatasetLineage,
+) -> TrainResult:
     if name not in ALL_MODELS:
         raise ValueError(f"unknown model '{name}'")
     logger.info("Training %s (%s trials)", name, n_trials)
@@ -217,7 +239,7 @@ def train_one_model(
     n_trials: int | None = None,
     *,
     enable_cv: bool | None = None,
-) -> dict:
+) -> TrainResult:
     """Train a single model and persist ``run_result.json`` under its artifact dir."""
     (
         _,
@@ -229,9 +251,13 @@ def train_one_model(
         _models_dir,
         lineage,
     ) = _prepare_training(config_path, n_trials, enable_cv)
-    tabular = load_tabular(processed_dir) if model_name in TABULAR_MODELS else None
-    mels_df = load_mels(processed_dir) if model_name == "resnet18" else None
-    result = _fit_named_model(
+    tabular: pd.DataFrame | None = (
+        load_tabular(processed_dir) if model_name in TABULAR_MODELS else None
+    )
+    mels_df: pd.DataFrame | None = (
+        load_mels(processed_dir) if model_name == "resnet18" else None
+    )
+    result: TrainResult = _fit_named_model(
         model_name,
         train_cfg=train_cfg,
         spark_cfg=spark_cfg,
@@ -248,26 +274,36 @@ def train_one_model(
 def select_winner_from_artifacts(
     config_path: Path = CONFIG_PATH,
     models: list[str] | None = None,
-) -> dict:
+) -> TrainResult:
     """Pick the winner from on-disk ``run_result.json`` files written by train tasks."""
-    full = load_full_config(config_path)
-    train_cfg = dict(full["training"])
-    models_dir = _resolve_models_dir(train_cfg)
-    artifact_root = Path(train_cfg["mlflow_artifact_root"])
+    full: AppConfig = load_full_config(config_path)
+    train_cfg: TrainingConfig | dict[str, object] = dict(full["training"])
+    models_dir: Path = _resolve_models_dir(train_cfg)
+    artifact_root: Path = Path(str(train_cfg["mlflow_artifact_root"]))
     if not artifact_root.is_absolute():
         artifact_root = ROOT / artifact_root
     train_cfg["mlflow_artifact_root"] = str(artifact_root)
     ensure_mlflow(train_cfg)
 
-    selected = models or list(train_cfg.get("models", ALL_MODELS))
-    results: list[dict] = []
+    selected: list[str] = models or list(train_cfg.get("models", ALL_MODELS))
+    results: list[TrainResult] = []
     for name in selected:
-        path = models_dir / name / RUN_RESULT_FILENAME
+        path: Path = models_dir / name / RUN_RESULT_FILENAME
         if not path.is_file():
             raise FileNotFoundError(f"missing run result for {name}: {path}")
         with open(path) as f:
-            results.append(json.load(f))
-    lineage = results[0].get("dataset") or {}
+            loaded: object = json.load(f)
+        results.append(cast(TrainResult, loaded))
+    lineage_raw: object = results[0].get("dataset") or {}
+    if not isinstance(lineage_raw, dict):
+        lineage_raw = {}
+    lineage: DatasetLineage = {
+        "hf_repo_id": cast(str | None, lineage_raw.get("hf_repo_id")),
+        "processed_created_at": cast(
+            str | None, lineage_raw.get("processed_created_at")
+        ),
+        "tabular": cast(dict[str, object], lineage_raw.get("tabular") or {}),
+    }
     return select_winner(results, models_dir, lineage)
 
 
@@ -277,7 +313,7 @@ def run_training(
     n_trials: int | None = None,
     *,
     enable_cv: bool | None = None,
-) -> list[dict]:
+) -> list[TrainResult]:
     (
         _,
         train_cfg,
@@ -288,16 +324,16 @@ def run_training(
         models_dir,
         lineage,
     ) = _prepare_training(config_path, n_trials, enable_cv)
-    selected = models or list(train_cfg.get("models", ALL_MODELS))
+    selected: list[str] = models or list(train_cfg.get("models", ALL_MODELS))
 
-    results: list[dict] = []
-    need_tabular = any(m in TABULAR_MODELS for m in selected)
-    need_mels = "resnet18" in selected
-    tabular = load_tabular(processed_dir) if need_tabular else None
-    mels_df = load_mels(processed_dir) if need_mels else None
+    results: list[TrainResult] = []
+    need_tabular: bool = any(m in TABULAR_MODELS for m in selected)
+    need_mels: bool = "resnet18" in selected
+    tabular: pd.DataFrame | None = load_tabular(processed_dir) if need_tabular else None
+    mels_df: pd.DataFrame | None = load_mels(processed_dir) if need_mels else None
 
     for name in selected:
-        result = _fit_named_model(
+        result: TrainResult = _fit_named_model(
             name,
             train_cfg=train_cfg,
             spark_cfg=spark_cfg,
@@ -332,7 +368,9 @@ def main() -> None:
         help="Enable official UrbanSound8K 10-fold eval CV after Optuna",
     )
     args = parser.parse_args()
-    models = [m.strip() for m in args.models.split(",")] if args.models else None
+    models: list[str] | None = (
+        [m.strip() for m in args.models.split(",")] if args.models else None
+    )
     run_training(
         config_path=args.config,
         models=models,

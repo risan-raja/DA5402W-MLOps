@@ -34,7 +34,7 @@ def tabular_feature_names(n_mfcc: int = 13) -> list[str]:
 
 
 def pad_or_truncate(y: np.ndarray, sample_rate: int, duration_sec: float) -> np.ndarray:
-    target = int(sample_rate * duration_sec)
+    target: int = int(sample_rate * duration_sec)
     if len(y) < target:
         return np.pad(y, (0, target - len(y)))
     return y[:target]
@@ -51,9 +51,9 @@ def _mean_std_feats(prefix: str, matrix: np.ndarray) -> dict[str, float]:
 def extract_tabular_features(
     y: np.ndarray, sample_rate: int, n_mfcc: int = 13
 ) -> dict[str, float]:
-    mfcc = librosa.feature.mfcc(y=y, sr=sample_rate, n_mfcc=n_mfcc)
-    mfcc_delta = librosa.feature.delta(mfcc)
-    chroma = librosa.feature.chroma_stft(y=y, sr=sample_rate)
+    mfcc: np.ndarray = librosa.feature.mfcc(y=y, sr=sample_rate, n_mfcc=n_mfcc)
+    mfcc_delta: np.ndarray = librosa.feature.delta(mfcc)
+    chroma: np.ndarray = librosa.feature.chroma_stft(y=y, sr=sample_rate)
     feats: dict[str, float] = {}
     feats.update(_mean_std_feats("mfcc", mfcc))
     feats.update(_mean_std_feats("mfcc_delta", mfcc_delta))
@@ -78,16 +78,16 @@ def extract_log_mel(
     hop_length: int,
     mel_frames: int,
 ) -> np.ndarray:
-    mel = librosa.feature.melspectrogram(
+    mel: np.ndarray = librosa.feature.melspectrogram(
         y=y,
         sr=sample_rate,
         n_mels=n_mels,
         n_fft=n_fft,
         hop_length=hop_length,
     )
-    log_mel = librosa.power_to_db(mel, ref=np.max).astype(np.float32)
+    log_mel: np.ndarray = librosa.power_to_db(mel, ref=np.max).astype(np.float32)
     if log_mel.shape[1] < mel_frames:
-        pad = mel_frames - log_mel.shape[1]
+        pad: int = mel_frames - log_mel.shape[1]
         log_mel = np.pad(log_mel, ((0, 0), (0, pad)))
     elif log_mel.shape[1] > mel_frames:
         log_mel = log_mel[:, :mel_frames]
@@ -104,12 +104,12 @@ def decode_wav(source: Path | str | bytes) -> tuple[np.ndarray, int]:
         y, sr = sf.read(io.BytesIO(source), always_2d=False)
     else:
         y, sr = sf.read(str(source), always_2d=False)
-    y = np.asarray(y, dtype=np.float32)
-    if y.ndim > 1:
-        y = np.mean(y, axis=1)
-    if y.size == 0:
+    y_arr: np.ndarray = np.asarray(y, dtype=np.float32)
+    if y_arr.ndim > 1:
+        y_arr = np.mean(y_arr, axis=1)
+    if y_arr.size == 0:
         raise ValueError("empty audio")
-    return y, int(sr)
+    return y_arr, int(sr)
 
 
 def prepare_waveform(
@@ -120,7 +120,7 @@ def prepare_waveform(
     duration_sec: float,
 ) -> np.ndarray:
     """Resample to ``sample_rate`` and pad/truncate to ``duration_sec``."""
-    y = np.asarray(y, dtype=np.float32)
+    y_arr: np.ndarray = np.asarray(y, dtype=np.float32)
     if native_sr != sample_rate:
-        y = librosa.resample(y, orig_sr=native_sr, target_sr=sample_rate)
-    return pad_or_truncate(y, sample_rate, duration_sec)
+        y_arr = librosa.resample(y_arr, orig_sr=native_sr, target_sr=sample_rate)
+    return pad_or_truncate(y_arr, sample_rate, duration_sec)

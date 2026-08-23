@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
+from src.config_types import AppConfig, SparkConfig
 from src.data_pipeline.audio_features import (
     decode_wav,
     extract_log_mel,
@@ -17,8 +18,8 @@ from src.deployment.runtime import LoadedModel
 from src.models.cnn_model import predict_proba as cnn_predict_proba
 
 
-def _spark_cfg(config: dict) -> dict:
-    spark = config.get("spark") or {}
+def _spark_cfg(config: AppConfig | dict[str, object]) -> dict[str, float | int]:
+    spark: SparkConfig | dict[str, object] = config.get("spark") or {}
     return {
         "sample_rate": int(spark.get("sample_rate", 16000)),
         "target_duration_sec": float(spark.get("target_duration_sec", 4.0)),
@@ -30,7 +31,7 @@ def _spark_cfg(config: dict) -> dict:
     }
 
 
-def _waveform(wav_bytes: bytes, spark_cfg: dict) -> np.ndarray:
+def _waveform(wav_bytes: bytes, spark_cfg: dict[str, float | int]) -> np.ndarray:
     y, native_sr = decode_wav(wav_bytes)
     return prepare_waveform(
         y,
@@ -40,10 +41,12 @@ def _waveform(wav_bytes: bytes, spark_cfg: dict) -> np.ndarray:
     )
 
 
-def _cnn_proba(loaded: LoadedModel, y: np.ndarray, spark_cfg: dict) -> np.ndarray:
+def _cnn_proba(
+    loaded: LoadedModel, y: np.ndarray, spark_cfg: dict[str, float | int]
+) -> np.ndarray:
     if loaded.torch_model is None or loaded.mel_stats is None:
         raise RuntimeError("CNN artifacts are not loaded")
-    log_mel = extract_log_mel(
+    log_mel: np.ndarray = extract_log_mel(
         y,
         int(spark_cfg["sample_rate"]),
         n_mels=int(spark_cfg["n_mels"]),
@@ -51,7 +54,7 @@ def _cnn_proba(loaded: LoadedModel, y: np.ndarray, spark_cfg: dict) -> np.ndarra
         hop_length=int(spark_cfg["hop_length"]),
         mel_frames=int(spark_cfg["mel_frames"]),
     )
-    mels = normalize_mels(log_mel[np.newaxis, ...], loaded.mel_stats)
+    mels: np.ndarray = normalize_mels(log_mel[np.newaxis, ...], loaded.mel_stats)
     return cnn_predict_proba(
         loaded.torch_model,
         mels,
@@ -60,35 +63,39 @@ def _cnn_proba(loaded: LoadedModel, y: np.ndarray, spark_cfg: dict) -> np.ndarra
     )
 
 
-def _tabular_proba(loaded: LoadedModel, y: np.ndarray, spark_cfg: dict) -> np.ndarray:
+def _tabular_proba(
+    loaded: LoadedModel, y: np.ndarray, spark_cfg: dict[str, float | int]
+) -> np.ndarray:
     if loaded.sklearn_model is None or loaded.scaler is None:
         raise RuntimeError("tabular artifacts are not loaded")
-    feats = extract_tabular_features(
+    feats: dict[str, float] = extract_tabular_features(
         y, int(spark_cfg["sample_rate"]), n_mfcc=int(spark_cfg["n_mfcc"])
     )
-    names = tabular_feature_names(n_mfcc=int(spark_cfg["n_mfcc"]))
-    row = np.array([[feats[name] for name in names]], dtype=np.float32)
-    scaled = loaded.scaler.transform(row)
+    names: list[str] = tabular_feature_names(n_mfcc=int(spark_cfg["n_mfcc"]))
+    row: np.ndarray = np.array([[feats[name] for name in names]], dtype=np.float32)
+    scaled: np.ndarray = loaded.scaler.transform(row)
     return np.asarray(loaded.sklearn_model.predict_proba(scaled), dtype=np.float32)
 
 
-def predict_clip(loaded: LoadedModel, wav_bytes: bytes, config: dict) -> dict:
-    spark_cfg = _spark_cfg(config)
-    y = _waveform(wav_bytes, spark_cfg)
+def predict_clip(
+    loaded: LoadedModel, wav_bytes: bytes, config: AppConfig | dict[str, object]
+) -> dict[str, object]:
+    spark_cfg: dict[str, float | int] = _spark_cfg(config)
+    y: np.ndarray = _waveform(wav_bytes, spark_cfg)
     if loaded.family == "cnn":
-        proba = _cnn_proba(loaded, y, spark_cfg)[0]
+        proba: np.ndarray = _cnn_proba(loaded, y, spark_cfg)[0]
     elif loaded.family == "tabular":
         proba = _tabular_proba(loaded, y, spark_cfg)[0]
     else:
         raise ValueError(f"unsupported family {loaded.family!r}")
-    class_ids = sorted(loaded.id_to_label)
-    probabilities = {
+    class_ids: list[int] = sorted(loaded.id_to_label)
+    probabilities: dict[str, float] = {
         loaded.id_to_label[idx]: float(proba[idx])
         for idx in class_ids
         if idx < len(proba)
     }
-    best_idx = int(np.argmax(proba))
-    label = loaded.id_to_label[best_idx]
+    best_idx: int = int(np.argmax(proba))
+    label: str = loaded.id_to_label[best_idx]
     return {
         "label": label,
         "confidence": float(proba[best_idx]),

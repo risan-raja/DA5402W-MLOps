@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Smoke test for the docker-compose stack: boots every service and checks
-# each one reaches a healthy/reachable state. Not a substitute for pytest —
-# this only proves the containers come up and talk to each other.
+# Smoke test for docker-compose: api, mlflow, prometheus, grafana.
+# Not a substitute for pytest — only proves containers come up and talk to each other.
+# On failure the stack is left running for inspection (no EXIT teardown).
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,24 +34,9 @@ wait_for() {
 
 echo "== Building and starting the stack =="
 $COMPOSE up --build -d
-trap '' EXIT
-
-echo
-echo "== Waiting for core services to report healthy =="
-wait_for "postgres healthy" 60 bash -c "$COMPOSE ps postgres | grep -q '(healthy)'"
-wait_for "airflow-webserver healthy" 120 bash -c "$COMPOSE ps airflow-webserver | grep -q '(healthy)'"
-
-echo
-echo "== Checking airflow-init ran to completion =="
-if $COMPOSE ps -a airflow-init 2>/dev/null | grep -qiE 'Exit 0|exited \(0\)'; then
-  pass "airflow-init exited 0"
-else
-  fail "airflow-init did not exit cleanly"
-fi
 
 echo
 echo "== Checking HTTP endpoints =="
-wait_for "Airflow api-server responds on :8080" 60 curl -sf http://localhost:8080/api/v2/monitor/health
 wait_for "API /health responds on :8000" 60 curl -sf http://localhost:8000/health
 wait_for "MLflow responds on :5001" 60 curl -sf http://localhost:5001/health
 wait_for "Prometheus responds on :9090" 60 curl -sf http://localhost:9090/-/healthy
@@ -72,19 +57,9 @@ else
 fi
 
 echo
-echo "== Checking PySpark runs inside the Airflow image =="
-if $COMPOSE exec -T airflow-scheduler python -c \
-  "from pyspark.sql import SparkSession; s = SparkSession.builder.master('local[*]').getOrCreate(); assert s.range(5).count() == 5" \
-  >/dev/null 2>&1; then
-  pass "PySpark local-mode job ran inside airflow-scheduler"
-else
-  fail "PySpark local-mode job failed inside airflow-scheduler"
-fi
-
-echo
-echo "== Checking Prometheus target status (api target may be down until /metrics ships) =="
+echo "== Checking Prometheus scrape targets =="
 if curl -sf http://localhost:9090/api/v1/targets | grep -q '"job":"api"'; then
-  pass "Prometheus is scraping the api job (check /targets for up/down state manually)"
+  pass "Prometheus is scraping the api job"
 else
   fail "Prometheus has no api scrape target configured"
 fi

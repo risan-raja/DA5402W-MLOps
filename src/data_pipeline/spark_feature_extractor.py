@@ -7,13 +7,14 @@ import logging
 import os
 import shutil
 import sys
+from collections.abc import Iterable, Iterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
-import yaml
 from pyspark.sql import Row, SparkSession
 from pyspark.sql.types import (
     ArrayType,
@@ -27,6 +28,8 @@ from pyspark.sql.types import (
     StructType,
 )
 
+from src.config import DEFAULT_CONFIG_PATH, load_app_config
+from src.config_types import AppConfig, SparkConfig
 from src.data_pipeline.audio_features import (
     decode_wav,
     extract_log_mel,
@@ -36,10 +39,10 @@ from src.data_pipeline.audio_features import (
 )
 from src.data_processing.versioning import push_dataset_tree
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = ROOT / "config" / "config.yaml"
+CONFIG_PATH = DEFAULT_CONFIG_PATH
 MANIFEST_FILENAME = ".manifest.json"
 TABULAR_FILENAME = "tabular.parquet"
 MELS_FILENAME = "mels.parquet"
@@ -54,28 +57,37 @@ META_COLS = (
 )
 
 
-def load_full_config(config_path: Path = CONFIG_PATH) -> dict:
-    with open(config_path) as f:
-        return yaml.safe_load(f)
+def _as_int(value: object) -> int:
+    return int(cast(int | float | str | bool, value))
+
+
+def _as_float(value: object) -> float:
+    return float(cast(int | float | str, value))
+
+
+def load_full_config(config_path: Path = CONFIG_PATH) -> AppConfig:
+    return load_app_config(config_path)
 
 
 def extract_clip_features(
-    abs_wav_path: Path | str, meta: dict, spark_cfg: dict
-) -> dict | None:
+    abs_wav_path: Path | str,
+    meta: Mapping[str, object],
+    spark_cfg: SparkConfig | Mapping[str, object],
+) -> dict[str, dict[str, object]] | None:
     """Return ``{"tabular": dict, "mel": dict}`` or None if the clip cannot be read."""
     try:
         y, sr = decode_wav(abs_wav_path)
-        sample_rate = int(spark_cfg["sample_rate"])
+        sample_rate: int = int(spark_cfg["sample_rate"])
         y = prepare_waveform(
             y,
             sr,
             sample_rate=sample_rate,
             duration_sec=float(spark_cfg["target_duration_sec"]),
         )
-        tabular_feats = extract_tabular_features(
+        tabular_feats: dict[str, float] = extract_tabular_features(
             y, sample_rate, n_mfcc=int(spark_cfg["n_mfcc"])
         )
-        log_mel = extract_log_mel(
+        log_mel: np.ndarray = extract_log_mel(
             y,
             sample_rate,
             n_mels=int(spark_cfg["n_mels"]),
@@ -87,9 +99,9 @@ def extract_clip_features(
         logger.warning("Dropping %s: %s", abs_wav_path, exc)
         return None
 
-    meta_out = {k: meta[k] for k in META_COLS}
-    tabular = {**meta_out, **tabular_feats}
-    mel = {
+    meta_out: dict[str, object] = {k: meta[k] for k in META_COLS}
+    tabular: dict[str, object] = {**meta_out, **tabular_feats}
+    mel: dict[str, object] = {
         **meta_out,
         "mel": log_mel.reshape(-1).astype(np.float32).tolist(),
         "mel_height": int(log_mel.shape[0]),
@@ -98,9 +110,16 @@ def extract_clip_features(
     return {"tabular": tabular, "mel": mel}
 
 
-def _extract_partition(rows, spark_cfg: dict):
+def _extract_partition(
+    rows: Iterable[Mapping[str, object]],
+    spark_cfg: SparkConfig | Mapping[str, object],
+) -> Iterator[dict[str, dict[str, object]]]:
     for row in rows:
-        result = extract_clip_features(row["_abs_path"], row, spark_cfg)
+        result = extract_clip_features(
+            cast(str | Path, row["_abs_path"]),
+            row,
+            spark_cfg,
+        )
         if result is not None:
             yield result
 
@@ -136,34 +155,36 @@ def _mel_schema() -> StructType:
     )
 
 
-def _to_tabular_row(record: dict, feature_names: list[str]) -> Row:
+def _to_tabular_row(
+    record: dict[str, dict[str, object]], feature_names: list[str]
+) -> Row:
     t = record["tabular"]
-    values = [
+    values: list[object] = [
         t["path"],
         t["slice_file_name"],
-        int(t["fold"]),
+        _as_int(t["fold"]),
         t["class"],
-        int(t["classID"]),
+        _as_int(t["classID"]),
         bool(t["is_augmented"]),
-        int(t["aug_index"]),
+        _as_int(t["aug_index"]),
     ]
-    values.extend(float(t[name]) for name in feature_names)
+    values.extend(_as_float(t[name]) for name in feature_names)
     return Row(*values)
 
 
-def _to_mel_row(record: dict) -> Row:
+def _to_mel_row(record: dict[str, dict[str, object]]) -> Row:
     m = record["mel"]
     return Row(
         m["path"],
         m["slice_file_name"],
-        int(m["fold"]),
+        _as_int(m["fold"]),
         m["class"],
-        int(m["classID"]),
+        _as_int(m["classID"]),
         bool(m["is_augmented"]),
-        int(m["aug_index"]),
+        _as_int(m["aug_index"]),
         m["mel"],
-        int(m["mel_height"]),
-        int(m["mel_width"]),
+        _as_int(m["mel_height"]),
+        _as_int(m["mel_width"]),
     )
 
 
@@ -196,7 +217,7 @@ def _finalize_spark_parquet_dir(spark_out_dir: Path, dest_file: Path) -> None:
     shutil.rmtree(spark_out_dir)
 
 
-def _chunked(items: list, size: int):
+def _chunked[T](items: list[T], size: int) -> Iterator[list[T]]:
     for i in range(0, len(items), size):
         yield items[i : i + size]
 
@@ -225,44 +246,44 @@ def _stream_merge_files(parts: list[Path], dest_file: Path) -> None:
 def extract_features(
     interim_dir: Path | str | None = None,
     processed_dir: Path | str | None = None,
-    config: dict | None = None,
+    config: AppConfig | None = None,
     *,
     push: bool = False,
     max_rows: int | None = None,
     force: bool = False,
-) -> dict:
-    full = config or load_full_config()
+) -> dict[str, object]:
+    full: AppConfig = config if config is not None else load_full_config()
     prep = full["preprocessing"]
-    spark_cfg = full["spark"]
-    interim_dir = Path(interim_dir or prep["local_interim_dir"])
-    processed_dir = Path(processed_dir or spark_cfg["local_processed_dir"])
-    if not interim_dir.is_absolute():
-        interim_dir = ROOT / interim_dir
-    if not processed_dir.is_absolute():
-        processed_dir = ROOT / processed_dir
+    spark_cfg: SparkConfig = full["spark"]
+    interim_path: Path = Path(interim_dir or prep["local_interim_dir"])
+    processed_path: Path = Path(processed_dir or spark_cfg["local_processed_dir"])
+    if not interim_path.is_absolute():
+        interim_path = ROOT / interim_path
+    if not processed_path.is_absolute():
+        processed_path = ROOT / processed_path
 
-    metadata_path = interim_dir / "metadata.parquet"
+    metadata_path: Path = interim_path / "metadata.parquet"
     if not metadata_path.exists():
         raise FileNotFoundError(f"missing interim metadata: {metadata_path}")
 
-    tabular_path = processed_dir / TABULAR_FILENAME
-    mels_path = processed_dir / MELS_FILENAME
-    manifest_path = processed_dir / MANIFEST_FILENAME
+    tabular_path: Path = processed_path / TABULAR_FILENAME
+    mels_path: Path = processed_path / MELS_FILENAME
+    manifest_path: Path = processed_path / MANIFEST_FILENAME
     if tabular_path.exists() and mels_path.exists() and not force:
         logger.info("Processed outputs already exist (pass force=True to redo)")
         with open(manifest_path) as f:
             return json.load(f)
 
-    meta = pd.read_parquet(metadata_path)
+    meta: pd.DataFrame = pd.read_parquet(metadata_path)
     if max_rows is not None:
         meta = meta.head(max_rows)
-    records = meta.to_dict(orient="records")
+    records: list[dict[str, object]] = meta.to_dict(orient="records")
     for row in records:
-        row["_abs_path"] = str(interim_dir / row["path"])
+        row["_abs_path"] = str(interim_path / cast(str, row["path"]))
 
-    feature_names = tabular_feature_names(n_mfcc=int(spark_cfg["n_mfcc"]))
-    processed_dir.mkdir(parents=True, exist_ok=True)
-    work_dir = processed_dir / "_spark_work"
+    feature_names: list[str] = tabular_feature_names(n_mfcc=int(spark_cfg["n_mfcc"]))
+    processed_path.mkdir(parents=True, exist_ok=True)
+    work_dir: Path = processed_path / "_spark_work"
     if work_dir.exists():
         shutil.rmtree(work_dir)
     work_dir.mkdir(parents=True)
@@ -270,12 +291,12 @@ def extract_features(
     os.environ["PYSPARK_PYTHON"] = sys.executable
     os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
 
-    batch_size = int(spark_cfg.get("batch_size", 256))
-    num_partitions = int(spark_cfg.get("num_partitions", 2))
-    driver_memory = spark_cfg.get("driver_memory", "1g")
-    max_result_size = spark_cfg.get("max_result_size", "512m")
+    batch_size: int = int(spark_cfg.get("batch_size", 256))
+    num_partitions: int = int(spark_cfg.get("num_partitions", 2))
+    driver_memory: str = spark_cfg.get("driver_memory", "1g")
+    max_result_size: str = spark_cfg.get("max_result_size", "512m")
 
-    spark = (
+    spark: SparkSession = (
         SparkSession.builder.master(spark_cfg["master"])
         .appName(spark_cfg["app_name"])
         .config("spark.driver.memory", driver_memory)
@@ -289,8 +310,8 @@ def extract_features(
     )
     spark.sparkContext.setLogLevel("WARN")
 
-    kept = 0
-    dropped = 0
+    kept: int = 0
+    dropped: int = 0
     tab_batch_files: list[Path] = []
     mel_batch_files: list[Path] = []
     try:
@@ -301,14 +322,14 @@ def extract_features(
                 len(batch),
                 batch_size,
             )
-            parts = min(num_partitions, len(batch))
+            parts: int = min(num_partitions, len(batch))
             rdd = spark.sparkContext.parallelize(batch, parts)
             # Cache only this small batch (~batch_size clips), then drop it.
             extracted = rdd.mapPartitions(
                 lambda part: _extract_partition(part, spark_cfg)
             ).cache()
-            batch_kept = extracted.count()
-            batch_dropped = len(batch) - batch_kept
+            batch_kept: int = extracted.count()
+            batch_dropped: int = len(batch) - batch_kept
             kept += batch_kept
             dropped += batch_dropped
             if batch_kept == 0:
@@ -322,10 +343,10 @@ def extract_features(
             )
             mel_df = spark.createDataFrame(mel_rdd, schema=_mel_schema())
 
-            tab_tmp = work_dir / f"tab_batch_{batch_idx}"
-            mel_tmp = work_dir / f"mel_batch_{batch_idx}"
-            tab_out = work_dir / f"tabular_batch_{batch_idx}.parquet"
-            mel_out = work_dir / f"mels_batch_{batch_idx}.parquet"
+            tab_tmp: Path = work_dir / f"tab_batch_{batch_idx}"
+            mel_tmp: Path = work_dir / f"mel_batch_{batch_idx}"
+            tab_out: Path = work_dir / f"tabular_batch_{batch_idx}.parquet"
+            mel_out: Path = work_dir / f"mels_batch_{batch_idx}.parquet"
             tab_df.write.mode("overwrite").parquet(str(tab_tmp))
             mel_df.write.mode("overwrite").parquet(str(mel_tmp))
             extracted.unpersist()
@@ -344,10 +365,10 @@ def extract_features(
     _stream_merge_files(mel_batch_files, mels_path)
     shutil.rmtree(work_dir, ignore_errors=True)
 
-    manifest = {
+    manifest: dict[str, object] = {
         "created_at": datetime.now(UTC).isoformat(),
-        "interim_dir": str(interim_dir),
-        "processed_dir": str(processed_dir),
+        "interim_dir": str(interim_path),
+        "processed_dir": str(processed_path),
         "num_input_rows": len(records),
         "num_written": kept,
         "num_dropped": dropped,
@@ -363,12 +384,14 @@ def extract_features(
         json.dump(manifest, f, indent=2)
     logger.info("Wrote processed features: %s", manifest)
 
-    should_push = push or bool(full.get("versioning", {}).get("push_processed", False))
+    should_push: bool = push or bool(
+        full.get("versioning", {}).get("push_processed", False)
+    )
     if should_push:
-        path_in_repo = full.get("versioning", {}).get(
+        path_in_repo: str = full.get("versioning", {}).get(
             "processed_path_in_repo", "processed"
         )
-        push_dataset_tree(processed_dir, path_in_repo)
+        push_dataset_tree(processed_path, path_in_repo)
         manifest["pushed_path_in_repo"] = path_in_repo
         with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2)

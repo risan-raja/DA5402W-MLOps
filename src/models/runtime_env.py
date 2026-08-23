@@ -26,7 +26,7 @@ def load_runtime_env(*, env_path: Path | None = None) -> Path:
     Call this before importing sklearn / xgboost / lightgbm / torch.
     Returns the path that was considered for dotenv loading.
     """
-    path = env_path if env_path is not None else ROOT / ".env"
+    path: Path = env_path if env_path is not None else ROOT / ".env"
     load_dotenv(path, override=False)
     for key, value in _THREAD_DEFAULTS.items():
         os.environ.setdefault(key, value)

@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import cast
 
 import joblib
 import mlflow
+import numpy as np
 import optuna
+import pandas as pd
 from mlflow.models import infer_signature
 
+from src.artifact_types import DatasetLineage, FoldMetricRow, TrainResult
+from src.config_types import SparkConfig, TrainingConfig
 from src.models.baseline_model import fit_predict_proba, suggest_params
 from src.models.cross_validation import aggregate_fold_metrics, log_cv_results
 from src.models.data import (
@@ -35,31 +40,31 @@ from src.models.mlflow_logging import (
     save_json,
 )
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 def train_tabular_model(
     model_name: str,
     *,
-    train_cfg: dict,
-    spark_cfg: dict,
-    tabular,
+    train_cfg: TrainingConfig | dict[str, object],
+    spark_cfg: SparkConfig | dict[str, object],
+    tabular: pd.DataFrame,
     n_trials: int,
     seed: int,
-    lineage: dict,
-) -> dict:
-    train_folds = list(train_cfg["train_folds"])
-    val_fold = int(train_cfg["val_fold"])
-    eval_fold = int(train_cfg["eval_fold"])
-    n_mfcc = int(spark_cfg.get("n_mfcc", 13))
+    lineage: DatasetLineage,
+) -> TrainResult:
+    train_folds: list[int] = list(train_cfg["train_folds"])
+    val_fold: int = int(train_cfg["val_fold"])
+    eval_fold: int = int(train_cfg["eval_fold"])
+    n_mfcc: int = int(spark_cfg.get("n_mfcc", 13))
 
     optuna_train, val_df, refit_df, eval_df = split_frames(
         tabular, train_folds, val_fold, eval_fold
     )
     label_to_id, id_to_label = build_label_maps(optuna_train["class"])
-    n_classes = len(label_to_id)
-    class_names = [id_to_label[i] for i in range(n_classes)]
-    feat_cols = feature_columns(tabular, n_mfcc=n_mfcc)
+    n_classes: int = len(label_to_id)
+    class_names: list[str] = [id_to_label[i] for i in range(n_classes)]
+    feat_cols: list[str] = feature_columns(tabular, n_mfcc=n_mfcc)
 
     x_tr, y_tr = tabular_xy(optuna_train, feat_cols, label_to_id)
     x_va, y_va = tabular_xy(val_df, feat_cols, label_to_id)
@@ -67,13 +72,13 @@ def train_tabular_model(
     x_ev, y_ev = tabular_xy(eval_df, feat_cols, label_to_id)
 
     scaler = fit_scaler(x_tr)
-    x_tr_s = transform_features(scaler, x_tr)
-    x_va_s = transform_features(scaler, x_va)
-    cw = class_weight_vector(y_tr, n_classes)
-    sw = sample_weights_from_y(y_tr, cw)
+    x_tr_s: np.ndarray = transform_features(scaler, x_tr)
+    x_va_s: np.ndarray = transform_features(scaler, x_va)
+    cw: np.ndarray = class_weight_vector(y_tr, n_classes)
+    sw: np.ndarray = sample_weights_from_y(y_tr, cw)
 
     def objective(trial: optuna.Trial) -> float:
-        params = suggest_params(model_name, trial, seed=seed)
+        params: dict[str, object] = suggest_params(model_name, trial, seed=seed)
         with mlflow.start_run(run_name=f"trial_{trial.number}", nested=True):
             mlflow.set_tag("optuna.trial_number", str(trial.number))
             mlflow.log_params(jsonable_params(params))
@@ -86,7 +91,7 @@ def train_tabular_model(
                 sample_weight=sw,
                 n_classes=n_classes,
             )
-            metrics = compute_metrics(y_va, pred)
+            metrics: dict[str, float] = compute_metrics(y_va, pred)
             mlflow.log_metrics(
                 {
                     "val_f1_macro": metrics["f1_macro"],
@@ -102,7 +107,7 @@ def train_tabular_model(
         mlflow.set_tag("model_family", "tabular")
         ml_dataset = log_dataset_lineage(lineage, model_name=model_name)
 
-        study = optuna.create_study(
+        study: optuna.Study = optuna.create_study(
             direction="maximize",
             study_name=f"{model_name}-macro-f1",
             sampler=optuna.samplers.TPESampler(seed=seed),
@@ -110,17 +115,17 @@ def train_tabular_model(
         study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
         log_optuna_study(study, parent.info.run_id, dataset=ml_dataset)
 
-        best_params = suggest_params(
+        best_params: dict[str, object] = suggest_params(
             model_name,
             optuna.trial.FixedTrial(study.best_params),
             seed=seed,
         )
 
         final_scaler = fit_scaler(x_rf)
-        x_rf_s = transform_features(final_scaler, x_rf)
-        x_ev_s = transform_features(final_scaler, x_ev)
-        cw_rf = class_weight_vector(y_rf, n_classes)
-        sw_rf = sample_weights_from_y(y_rf, cw_rf)
+        x_rf_s: np.ndarray = transform_features(final_scaler, x_rf)
+        x_ev_s: np.ndarray = transform_features(final_scaler, x_ev)
+        cw_rf: np.ndarray = class_weight_vector(y_rf, n_classes)
+        sw_rf: np.ndarray = sample_weights_from_y(y_rf, cw_rf)
 
         model, pred, proba = fit_predict_proba(
             model_name,
@@ -139,10 +144,10 @@ def train_tabular_model(
             {f"best_{k}": v for k, v in jsonable_params(best_params).items()}
         )
 
-        out_dir = Path(train_cfg["models_dir"]) / model_name
+        out_dir: Path = Path(train_cfg["models_dir"]) / model_name
         out_dir.mkdir(parents=True, exist_ok=True)
-        model_path = out_dir / "model.joblib"
-        scaler_path = out_dir / "scaler.joblib"
+        model_path: Path = out_dir / "model.joblib"
+        scaler_path: Path = out_dir / "scaler.joblib"
         joblib.dump(model, model_path)
         joblib.dump(final_scaler, scaler_path)
         save_json(
@@ -163,7 +168,7 @@ def train_tabular_model(
             },
         )
 
-        cm_path = out_dir / "confusion_matrix.png"
+        cm_path: Path = out_dir / "confusion_matrix.png"
         confusion_matrix_figure(y_ev, pred, class_names, cm_path)
         mlflow.log_artifact(str(cm_path))
         mlflow.log_artifact(str(scaler_path))
@@ -175,24 +180,28 @@ def train_tabular_model(
 
         cv_cfg = train_cfg.get("cv") or {}
         if cv_cfg.get("enabled"):
-            n_folds = int(cv_cfg.get("n_folds", 10))
+            n_folds: int = int(cv_cfg.get("n_folds", 10))
             # Global label map so fold-local class gaps do not renumber IDs.
             cv_label_to_id, _ = build_label_maps(tabular["class"])
-            cv_n_classes = len(cv_label_to_id)
-            fold_rows: list[dict] = []
+            cv_n_classes: int = len(cv_label_to_id)
+            fold_rows: list[FoldMetricRow] = []
             logger.info(
                 "Running UrbanSound8K %s-fold eval CV for %s", n_folds, model_name
             )
             for test_fold, cv_train_folds in iter_us8k_cv_folds(n_folds):
-                train_df = filter_split(tabular, cv_train_folds, include_augmented=True)
-                test_df = filter_split(tabular, [test_fold], include_augmented=False)
+                train_df: pd.DataFrame = filter_split(
+                    tabular, cv_train_folds, include_augmented=True
+                )
+                test_df: pd.DataFrame = filter_split(
+                    tabular, [test_fold], include_augmented=False
+                )
                 x_tr_cv, y_tr_cv = tabular_xy(train_df, feat_cols, cv_label_to_id)
                 x_te_cv, y_te_cv = tabular_xy(test_df, feat_cols, cv_label_to_id)
                 fold_scaler = fit_scaler(x_tr_cv)
-                x_tr_cv_s = transform_features(fold_scaler, x_tr_cv)
-                x_te_cv_s = transform_features(fold_scaler, x_te_cv)
-                cw_cv = class_weight_vector(y_tr_cv, cv_n_classes)
-                sw_cv = sample_weights_from_y(y_tr_cv, cw_cv)
+                x_tr_cv_s: np.ndarray = transform_features(fold_scaler, x_tr_cv)
+                x_te_cv_s: np.ndarray = transform_features(fold_scaler, x_te_cv)
+                cw_cv: np.ndarray = class_weight_vector(y_tr_cv, cv_n_classes)
+                sw_cv: np.ndarray = sample_weights_from_y(y_tr_cv, cw_cv)
                 _, pred_cv, proba_cv = fit_predict_proba(
                     model_name,
                     best_params,
@@ -202,14 +211,16 @@ def train_tabular_model(
                     sample_weight=sw_cv,
                     n_classes=cv_n_classes,
                 )
-                fold_metrics = compute_metrics(
+                fold_metrics: dict[str, float] = compute_metrics(
                     y_te_cv,
                     pred_cv,
                     y_proba=proba_cv,
                     labels=list(range(cv_n_classes)),
                 )
-                fold_rows.append({"fold": int(test_fold), **fold_metrics})
-            aggregate = aggregate_fold_metrics(fold_rows)
+                fold_rows.append(
+                    cast(FoldMetricRow, {"fold": int(test_fold), **fold_metrics})
+                )
+            aggregate: dict[str, float] = aggregate_fold_metrics(fold_rows)
             metrics.update(aggregate)
             log_cv_results(fold_rows, aggregate, out_dir)
             save_json(out_dir / "metrics.json", metrics)
@@ -223,9 +234,10 @@ def train_tabular_model(
             is_winner=False,
         )
 
-        return {
+        result: TrainResult = {
             "model_name": model_name,
             "run_id": parent.info.run_id,
             "metrics": metrics,
             "out_dir": str(out_dir),
         }
+        return result

@@ -17,7 +17,6 @@ ENV PYTHONUNBUFFERED=1 \
     UV_NO_DEV=1 \
     UV_TOOL_BIN_DIR=/usr/local/bin
 
-# Dependency layer (lockfile/pyproject change less often than source)
 # g++ is required to build python-stretch (audiomentations) on linux/arm64.
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \

@@ -23,24 +23,30 @@ from mlflow.data.meta_dataset import MetaDataset
 from mlflow.exceptions import MlflowException
 from mlflow.tracking import MlflowClient
 
-logger = logging.getLogger(__name__)
+from src.artifact_types import DatasetLineage, FileFingerprint
+from src.config_types import TrainingConfig
+from src.model_protocols import SupportsPredictProba
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
-def ensure_mlflow(train_cfg: dict) -> None:
-    tracking = os.environ.get("MLFLOW_TRACKING_URI") or train_cfg["mlflow_tracking_uri"]
+def ensure_mlflow(train_cfg: TrainingConfig | dict[str, object]) -> None:
+    tracking: str = os.environ.get("MLFLOW_TRACKING_URI") or str(
+        train_cfg["mlflow_tracking_uri"]
+    )
     mlflow.set_tracking_uri(tracking)
-    Path(train_cfg["mlflow_artifact_root"]).mkdir(parents=True, exist_ok=True)
-    mlflow.set_experiment(train_cfg["mlflow_experiment"])
+    Path(str(train_cfg["mlflow_artifact_root"])).mkdir(parents=True, exist_ok=True)
+    mlflow.set_experiment(str(train_cfg["mlflow_experiment"]))
 
 
-def save_json(path: Path, payload: dict) -> None:
+def save_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(payload, f, indent=2)
 
 
-def jsonable_params(params: dict) -> dict:
-    out = {}
+def jsonable_params(params: dict[str, object]) -> dict[str, object]:
+    out: dict[str, object] = {}
     for k, v in params.items():
         if isinstance(v, (np.integer, int)):
             out[k] = int(v)
@@ -51,12 +57,10 @@ def jsonable_params(params: dict) -> dict:
     return out
 
 
-def log_dataset_lineage(lineage: dict, *, model_name: str | None = None) -> MetaDataset:
-    """Attach dataset provenance and register an MLflow Dataset input.
-
-    Returns the MetaDataset so metrics can be logged with ``dataset=...``
-    (fills the Metrics table Dataset column in the MLflow UI).
-    """
+def log_dataset_lineage(
+    lineage: DatasetLineage, *, model_name: str | None = None
+) -> MetaDataset:
+    """Log dataset provenance params/tags and register an MLflow Dataset input."""
     scalar_keys = (
         "hf_repo_id",
         "hf_repo_type",
@@ -68,18 +72,18 @@ def log_dataset_lineage(lineage: dict, *, model_name: str | None = None) -> Meta
         "processed_num_rows",
         "processed_num_input_rows",
     )
-    params: dict = {}
-    tags: dict = {}
+    params: dict[str, object] = {}
+    tags: dict[str, str] = {}
     for key in scalar_keys:
         val = lineage.get(key)
         if val is None or val == "":
             continue
-        s = str(val)
+        s: str = str(val)
         params[f"data_{key}"] = s[:250]
         tags[f"data.{key}"] = s[:5000]
 
-    tab = lineage.get("tabular") or {}
-    mel = lineage.get("mels") or {}
+    tab: FileFingerprint = lineage.get("tabular") or {}
+    mel: FileFingerprint = lineage.get("mels") or {}
     if tab.get("sha256"):
         params["data_tabular_sha256"] = tab["sha256"][:64]
         tags["data.tabular_sha256"] = tab["sha256"]
@@ -99,8 +103,8 @@ def log_dataset_lineage(lineage: dict, *, model_name: str | None = None) -> Meta
         mlflow.set_tag(k, v)
 
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "dataset_lineage.json"
-        slim = {
+        path: Path = Path(tmp) / "dataset_lineage.json"
+        slim: dict[str, object] = {
             k: v
             for k, v in lineage.items()
             if k not in {"processed_manifest", "interim_manifest", "raw_manifest"}
@@ -116,21 +120,20 @@ def log_dataset_lineage(lineage: dict, *, model_name: str | None = None) -> Meta
             json.dump(slim, f, indent=2)
         mlflow.log_artifact(str(path), artifact_path="dataset")
 
-    repo = lineage.get("hf_repo_id") or "unknown"
+    repo: str = lineage.get("hf_repo_id") or "unknown"
     # MLflow rejects digests longer than 36 chars.
-    digest = (tab.get("sha256") or mel.get("sha256") or "unknown")[:36]
-    source_url = f"https://huggingface.co/datasets/{repo}"
-    dataset_name = "urbansound8k-processed"
+    digest: str = (tab.get("sha256") or mel.get("sha256") or "unknown")[:36]
+    source_url: str = f"https://huggingface.co/datasets/{repo}"
+    dataset_name: str = "urbansound8k-processed"
     if model_name:
         dataset_name = f"{dataset_name}-{model_name}"
-    dataset = MetaDataset(
+    dataset: MetaDataset = MetaDataset(
         source=HTTPDatasetSource(source_url),
         name=dataset_name,
         digest=digest,
     )
     register_dataset_input(dataset)
     return dataset
-
 
 def register_dataset_input(dataset: MetaDataset, *, attempts: int = 5) -> None:
     """Attach ``dataset`` to the active run.
@@ -170,16 +173,16 @@ def log_optuna_study(
     *,
     dataset: MetaDataset | None = None,
 ) -> None:
-    """Full Optuna report on the parent run (trials table + best summary)."""
+    """Log Optuna trials table and best-trial summary on the parent run."""
     mlflow.log_metric("optuna_best_value", float(study.best_value), dataset=dataset)
     mlflow.log_param("optuna_best_trial", int(study.best_trial.number))
     mlflow.log_param("optuna_n_trials", len(study.trials))
     mlflow.set_tag("optuna.best_value", f"{study.best_value:.6f}")
     mlflow.set_tag("optuna.best_trial", str(study.best_trial.number))
 
-    rows = []
+    rows: list[dict[str, object]] = []
     for t in study.trials:
-        row = {
+        row: dict[str, object] = {
             "number": t.number,
             "state": str(t.state),
             "value": t.value,
@@ -194,10 +197,10 @@ def log_optuna_study(
                 dataset=dataset,
             )
 
-    frame = pd.DataFrame(rows)
+    frame: pd.DataFrame = pd.DataFrame(rows)
     with tempfile.TemporaryDirectory() as tmp:
-        csv_path = Path(tmp) / "optuna_trials.csv"
-        json_path = Path(tmp) / "optuna_best.json"
+        csv_path: Path = Path(tmp) / "optuna_trials.csv"
+        json_path: Path = Path(tmp) / "optuna_best.json"
         frame.to_csv(csv_path, index=False)
         save_json(
             json_path,
@@ -216,15 +219,15 @@ def register_and_tag(
     model_name: str,
     run_id: str,
     metrics: dict[str, float],
-    lineage: dict,
+    lineage: DatasetLineage,
     *,
     is_winner: bool,
 ) -> None:
-    model_uri = f"runs:/{run_id}/model"
+    model_uri: str = f"runs:/{run_id}/model"
     mv = mlflow.register_model(model_uri, name=model_name)
-    client = MlflowClient()
+    client: MlflowClient = MlflowClient()
     client.set_registered_model_alias(model_name, "champion", mv.version)
-    tags = {
+    tags: dict[str, str] = {
         "f1_macro": f"{metrics.get('f1_macro', float('nan')):.6f}",
         "winner": "true" if is_winner else "false",
         "hf_repo_id": str(lineage.get("hf_repo_id") or ""),
@@ -241,7 +244,11 @@ def register_and_tag(
     )
 
 
-def log_sklearn_family_model(model_name: str, model, signature) -> None:
+def log_sklearn_family_model(
+    model_name: str,
+    model: SupportsPredictProba,
+    signature: object,
+) -> None:
     # name="model" keeps runs:/{id}/model resolvable for Model Registry.
     if model_name == "rf":
         mlflow.sklearn.log_model(model, name="model", signature=signature)

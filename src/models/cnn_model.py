@@ -11,6 +11,7 @@ from pathlib import Path
 import certifi
 import librosa
 import numpy as np
+import optuna
 import torch
 import torch.nn as nn  # noqa: PLR0402
 import torch.nn.functional as F
@@ -18,7 +19,9 @@ from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.data import DataLoader, Dataset
 from torchvision.models import ResNet18_Weights, resnet18
 
-logger = logging.getLogger(__name__)
+from src.artifact_types import CnnHistory, CnnSuggestParams
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 def resolve_device() -> torch.device:
@@ -34,37 +37,37 @@ def resolve_device() -> torch.device:
 
 def mel_to_3ch(mel: np.ndarray) -> np.ndarray:
     """Stack log-mel, delta, delta-delta → (3, H, W)."""
-    mel = np.asarray(mel, dtype=np.float32)
-    delta = librosa.feature.delta(mel)
-    delta2 = librosa.feature.delta(mel, order=2)
-    return np.stack([mel, delta, delta2], axis=0).astype(np.float32)
+    mel_arr: np.ndarray = np.asarray(mel, dtype=np.float32)
+    delta: np.ndarray = librosa.feature.delta(mel_arr)
+    delta2: np.ndarray = librosa.feature.delta(mel_arr, order=2)
+    return np.stack([mel_arr, delta, delta2], axis=0).astype(np.float32)
 
 
 def _resnet18_weight_path() -> Path:
-    url = ResNet18_Weights.IMAGENET1K_V1.url
-    filename = url.rsplit("/", 1)[-1]
-    cache_dir = Path(torch.hub.get_dir()) / "checkpoints"
+    url: str = ResNet18_Weights.IMAGENET1K_V1.url
+    filename: str = url.rsplit("/", 1)[-1]
+    cache_dir: Path = Path(torch.hub.get_dir()) / "checkpoints"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir / filename
 
 
 def ensure_resnet18_weights() -> Path:
     """Download ImageNet ResNet-18 weights using certifi CA bundle (macOS Python.org SSL)."""
-    cached = _resnet18_weight_path()
+    cached: Path = _resnet18_weight_path()
     if cached.is_file() and cached.stat().st_size > 0:
         return cached
 
     url = ResNet18_Weights.IMAGENET1K_V1.url
     logger.info("Downloading ResNet-18 ImageNet weights to %s", cached)
     ctx = ssl.create_default_context(cafile=certifi.where())
-    tmp = cached.with_suffix(cached.suffix + ".tmp")
+    tmp: Path = cached.with_suffix(cached.suffix + ".tmp")
     try:
         with (
             urllib.request.urlopen(url, context=ctx, timeout=120) as resp,
             open(tmp, "wb") as out,
         ):
             while True:
-                chunk = resp.read(1024 * 1024)
+                chunk: bytes = resp.read(1024 * 1024)
                 if not chunk:
                     break
                 out.write(chunk)
@@ -77,9 +80,9 @@ def ensure_resnet18_weights() -> Path:
 
 
 def build_resnet18(n_classes: int = 10, pretrained: bool = True) -> nn.Module:
-    model = resnet18(weights=None)
+    model: nn.Module = resnet18(weights=None)
     if pretrained:
-        path = ensure_resnet18_weights()
+        path: Path = ensure_resnet18_weights()
         state = torch.load(path, map_location="cpu", weights_only=True)
         model.load_state_dict(state)
     model.fc = nn.Linear(model.fc.in_features, n_classes)
@@ -87,14 +90,14 @@ def build_resnet18(n_classes: int = 10, pretrained: bool = True) -> nn.Module:
 
 
 class MelDataset(Dataset):
-    def __init__(self, mels: np.ndarray, labels: np.ndarray):
-        self.mels = mels
-        self.labels = labels.astype(np.int64)
+    def __init__(self, mels: np.ndarray, labels: np.ndarray) -> None:
+        self.mels: np.ndarray = mels
+        self.labels: np.ndarray = labels.astype(np.int64)
 
     def __len__(self) -> int:
         return len(self.labels)
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         x = torch.from_numpy(mel_to_3ch(self.mels[idx]))
         y = torch.tensor(self.labels[idx], dtype=torch.long)
         return x, y
@@ -115,17 +118,15 @@ def predict_proba(
     device = device or resolve_device()
     model = model.to(device)
     model.eval()
-    loader = DataLoader(
+    loader: DataLoader = DataLoader(
         MelDataset(mels, np.zeros(len(mels), dtype=np.int64)),
         batch_size=batch_size,
         shuffle=False,
-        # num_workers=2,
-        # pin_memory=True,
     )
     probs: list[np.ndarray] = []
     for xb, _ in loader:
         xb = _resize_batch(xb.to(device))
-        logits = model(xb)
+        logits: torch.Tensor = model(xb)
         probs.append(torch.softmax(logits, dim=1).cpu().numpy())
     if not probs:
         return np.empty((0, 0), dtype=np.float32)
@@ -147,29 +148,31 @@ def train_resnet(
     pretrained: bool = True,
     device: torch.device | None = None,
     early_stop: bool = True,
-) -> tuple[nn.Module, dict[str, float]]:
+) -> tuple[nn.Module, CnnHistory]:
     device = device or resolve_device()
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    n_classes = int(class_weights.shape[0])
-    model = build_resnet18(n_classes=n_classes, pretrained=pretrained).to(device)
+    n_classes: int = int(class_weights.shape[0])
+    model: nn.Module = build_resnet18(n_classes=n_classes, pretrained=pretrained).to(
+        device
+    )
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-    weight = torch.tensor(class_weights, dtype=torch.float32, device=device)
+    weight: torch.Tensor = torch.tensor(
+        class_weights, dtype=torch.float32, device=device
+    )
     criterion = nn.CrossEntropyLoss(weight=weight)
 
-    train_loader = DataLoader(
+    train_loader: DataLoader = DataLoader(
         MelDataset(mels_train, y_train),
         batch_size=batch_size,
         shuffle=True,
-        # num_workers=4,
-        # pin_memory=True,
     )
 
     best_state = copy.deepcopy(model.state_dict())
-    best_f1 = -1.0
-    stale = 0
-    history = {
+    best_f1: float = -1.0
+    stale: int = 0
+    history: CnnHistory = {
         "best_val_f1_macro": 0.0,
         "best_val_accuracy": float("nan"),
         "best_val_f1_weighted": float("nan"),
@@ -182,7 +185,7 @@ def train_resnet(
             xb = _resize_batch(xb.to(device))
             yb = yb.to(device)
             optimizer.zero_grad(set_to_none=True)
-            loss = criterion(model(xb), yb)
+            loss: torch.Tensor = criterion(model(xb), yb)
             loss.backward()
             optimizer.step()
 
@@ -191,9 +194,11 @@ def train_resnet(
             best_state = copy.deepcopy(model.state_dict())
             continue
 
-        proba = predict_proba(model, mels_val, batch_size=batch_size, device=device)
-        pred = np.argmax(proba, axis=1)
-        val_f1 = float(f1_score(y_val, pred, average="macro", zero_division=0))
+        proba: np.ndarray = predict_proba(
+            model, mels_val, batch_size=batch_size, device=device
+        )
+        pred: np.ndarray = np.argmax(proba, axis=1)
+        val_f1: float = float(f1_score(y_val, pred, average="macro", zero_division=0))
         if val_f1 > best_f1:
             best_f1 = val_f1
             best_state = copy.deepcopy(model.state_dict())
@@ -222,7 +227,7 @@ def train_resnet(
     return model, history
 
 
-def suggest_cnn_params(trial, seed: int = 42) -> dict:
+def suggest_cnn_params(trial: optuna.Trial, seed: int = 42) -> CnnSuggestParams:
     return {
         "lr": trial.suggest_float("lr", 1e-5, 3e-4, log=True),
         "batch_size": trial.suggest_categorical("batch_size", [16, 32]),

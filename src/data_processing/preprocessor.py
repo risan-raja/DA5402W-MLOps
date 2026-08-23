@@ -7,33 +7,40 @@ import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import librosa
 import numpy as np
 import pandas as pd
 import pyarrow.dataset as ds
 import soundfile as sf
-import yaml
+from pandas import DataFrame
 
+from src.config import (
+    DEFAULT_CONFIG_PATH,
+    load_app_config,
+)
+from src.config import (
+    load_preprocessing_config as _load_preprocessing_config,
+)
+from src.config_types import AppConfig, DatasetConfig, PreprocessingConfig
 from src.data_processing.audio_augmentor import augment_waveform, build_augmentations
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = ROOT / "config" / "config.yaml"
+CONFIG_PATH = DEFAULT_CONFIG_PATH
 MANIFEST_FILENAME = ".manifest.json"
 METADATA_FILENAME = "metadata.parquet"
 AUDIO_DIRNAME = "audio"
 
 
-def load_full_config(config_path: Path = CONFIG_PATH) -> dict:
-    with open(config_path) as f:
-        return yaml.safe_load(f)
+def load_full_config(config_path: Path = CONFIG_PATH) -> AppConfig:
+    return load_app_config(config_path)
 
 
-def load_preprocessing_config(config_path: Path = CONFIG_PATH) -> dict:
-    return load_full_config(config_path)["preprocessing"]
-
+def load_preprocessing_config(config_path: Path = CONFIG_PATH) -> PreprocessingConfig:
+    return _load_preprocessing_config(config_path)
 
 def clean_clip(
     y: np.ndarray,
@@ -52,7 +59,7 @@ def clean_clip(
         y = librosa.resample(y, orig_sr=sr, target_sr=target_sr)
         sr = target_sr
 
-    peak = float(np.max(np.abs(y)))
+    peak: float = float(np.max(np.abs(y)))
     if peak == 0.0:
         raise ValueError("silent audio")
     y = (y / peak).astype(np.float32)
@@ -74,12 +81,13 @@ def fold_split(
     if fold_column not in frame.columns:
         raise ValueError(f"missing fold column '{fold_column}'")
     eval_mask = frame[fold_column] == eval_fold
+    train: DataFrame
     if "is_augmented" in frame.columns:
         eval_mask = eval_mask & ~frame["is_augmented"].astype(bool)
         train = frame.loc[frame[fold_column] != eval_fold].reset_index(drop=True)
     else:
         train = frame.loc[~eval_mask].reset_index(drop=True)
-    eval_df = frame.loc[eval_mask].reset_index(drop=True)
+    eval_df: DataFrame = frame.loc[eval_mask].reset_index(drop=True)
     return train, eval_df
 
 
@@ -104,24 +112,24 @@ def _write_wav(path: Path, y: np.ndarray, sr: int) -> None:
 def process_raw_to_interim(
     raw_dir: Path | str | None = None,
     interim_dir: Path | str | None = None,
-    config: dict | None = None,
+    config: AppConfig | None = None,
     *,
     max_rows: int | None = None,
     force: bool = False,
-) -> dict:
+) -> dict[str, object]:
     """Decode/clean raw parquet audio into interim wavs + metadata.parquet.
 
     Train folds get ``augment_copies`` on-disk siblings; the eval fold does not.
     """
-    full = config or load_full_config()
-    dataset_cfg = full["dataset"]
-    prep = full["preprocessing"]
+    full: AppConfig = config if config is not None else load_full_config()
+    dataset_cfg: DatasetConfig = full["dataset"]
+    prep: PreprocessingConfig = full["preprocessing"]
 
-    raw_dir = Path(raw_dir or dataset_cfg["local_raw_dir"])
-    interim_dir = Path(interim_dir or prep["local_interim_dir"])
-    audio_root = interim_dir / AUDIO_DIRNAME
-    metadata_path = interim_dir / METADATA_FILENAME
-    manifest_path = interim_dir / MANIFEST_FILENAME
+    raw_dir_path: Path = Path(raw_dir or dataset_cfg["local_raw_dir"])
+    interim_dir_path: Path = Path(interim_dir or prep["local_interim_dir"])
+    audio_root: Path = interim_dir_path / AUDIO_DIRNAME
+    metadata_path: Path = interim_dir_path / METADATA_FILENAME
+    manifest_path: Path = interim_dir_path / MANIFEST_FILENAME
 
     if metadata_path.exists() and not force:
         logger.info(
@@ -131,19 +139,19 @@ def process_raw_to_interim(
         with open(manifest_path) as f:
             return json.load(f)
 
-    parquet_dir = raw_dir / "data"
+    parquet_dir: Path = raw_dir_path / "data"
     if not parquet_dir.exists():
         raise FileNotFoundError(f"raw parquet directory not found: {parquet_dir}")
 
-    target_sr = int(prep["target_sample_rate"])
-    eval_fold = int(prep["eval_fold"])
-    augment_copies = int(prep["augment_copies"])
-    fold_column = prep.get("fold_column", dataset_cfg["fold_column"])
-    label_column = prep.get("label_column", dataset_cfg["label_column"])
-    base_seed = int(prep.get("seed", 42))
+    target_sr: int = int(prep["target_sample_rate"])
+    eval_fold: int = int(prep["eval_fold"])
+    augment_copies: int = int(prep["augment_copies"])
+    fold_column: str = prep.get("fold_column", dataset_cfg["fold_column"])
+    label_column: str = prep.get("label_column", dataset_cfg["label_column"])
+    base_seed: int = int(prep.get("seed", 42))
 
     table = ds.dataset(str(parquet_dir), format="parquet")
-    columns = [
+    columns: list[str] = [
         "audio",
         "slice_file_name",
         "fsID",
@@ -157,42 +165,44 @@ def process_raw_to_interim(
     scanner = table.scanner(columns=columns)
     augmentations = build_augmentations()
 
-    interim_dir.mkdir(parents=True, exist_ok=True)
+    interim_dir_path.mkdir(parents=True, exist_ok=True)
     if force and audio_root.exists():
         for wav in audio_root.rglob("*.wav"):
             wav.unlink()
 
-    rows: list[dict] = []
-    dropped = 0
-    seen = 0
+    rows: list[dict[str, object]] = []
+    dropped: int = 0
+    seen: int = 0
 
     for batch in scanner.to_batches():
-        batch_dict = batch.to_pydict()
-        n = len(batch_dict["slice_file_name"])
+        batch_dict: dict[str, list[object]] = batch.to_pydict()
+        n: int = len(batch_dict["slice_file_name"])
         for i in range(n):
             if max_rows is not None and seen >= max_rows:
                 break
             seen += 1
-            slice_name = batch_dict["slice_file_name"][i]
-            fold = int(batch_dict[fold_column][i])
-            label = batch_dict[label_column][i]
-            class_id = int(batch_dict["classID"][i])
-            audio_struct = batch_dict["audio"][i]
-            audio_bytes = (
-                audio_struct["bytes"] if isinstance(audio_struct, dict) else None
+            slice_name: str = str(batch_dict["slice_file_name"][i])
+            fold: int = int(cast(int | float | str, batch_dict[fold_column][i]))
+            label: object = batch_dict[label_column][i]
+            class_id: int = int(cast(int | float | str, batch_dict["classID"][i]))
+            audio_struct: object = batch_dict["audio"][i]
+            audio_bytes: bytes | None = (
+                cast(bytes | None, audio_struct.get("bytes"))
+                if isinstance(audio_struct, dict)
+                else None
             )
 
             try:
-                y, sr = decode_audio_bytes(audio_bytes)
+                y, sr = decode_audio_bytes(audio_bytes or b"")
                 y, sr = clean_clip(y, sr, target_sr=target_sr)
             except (ValueError, OSError, RuntimeError) as exc:
                 dropped += 1
                 logger.warning("Dropping %s: %s", slice_name, exc)
                 continue
 
-            stem = _stem_from_slice_name(slice_name)
-            rel_path = Path(f"fold{fold}") / f"{stem}.wav"
-            abs_path = audio_root / rel_path
+            stem: str = _stem_from_slice_name(slice_name)
+            rel_path: Path = Path(f"fold{fold}") / f"{stem}.wav"
+            abs_path: Path = audio_root / rel_path
             _write_wav(abs_path, y, sr)
             rows.append(
                 {
@@ -201,10 +211,12 @@ def process_raw_to_interim(
                     "fold": fold,
                     "class": label,
                     "classID": class_id,
-                    "fsID": int(batch_dict["fsID"][i]),
-                    "start": float(batch_dict["start"][i]),
-                    "end": float(batch_dict["end"][i]),
-                    "salience": int(batch_dict["salience"][i]),
+                    "fsID": int(cast(int | float | str, batch_dict["fsID"][i])),
+                    "start": float(cast(int | float | str, batch_dict["start"][i])),
+                    "end": float(cast(int | float | str, batch_dict["end"][i])),
+                    "salience": int(
+                        cast(int | float | str, batch_dict["salience"][i])
+                    ),
                     "sample_rate": sr,
                     "is_augmented": False,
                     "aug_index": -1,
@@ -215,7 +227,7 @@ def process_raw_to_interim(
                 continue
 
             for aug_i in range(augment_copies):
-                aug = augment_waveform(
+                aug: np.ndarray = augment_waveform(
                     y,
                     sr,
                     key=slice_name,
@@ -223,10 +235,10 @@ def process_raw_to_interim(
                     base_seed=base_seed,
                     augmentations=augmentations,
                 )
-                peak = float(np.max(np.abs(aug)))
+                peak: float = float(np.max(np.abs(aug)))
                 if peak > 0:
                     aug = (aug / peak).astype(np.float32)
-                aug_rel = Path(f"fold{fold}") / f"{stem}_aug{aug_i}.wav"
+                aug_rel: Path = Path(f"fold{fold}") / f"{stem}_aug{aug_i}.wav"
                 _write_wav(audio_root / aug_rel, aug, sr)
                 rows.append(
                     {
@@ -235,10 +247,14 @@ def process_raw_to_interim(
                         "fold": fold,
                         "class": label,
                         "classID": class_id,
-                        "fsID": int(batch_dict["fsID"][i]),
-                        "start": float(batch_dict["start"][i]),
-                        "end": float(batch_dict["end"][i]),
-                        "salience": int(batch_dict["salience"][i]),
+                        "fsID": int(cast(int | float | str, batch_dict["fsID"][i])),
+                        "start": float(
+                            cast(int | float | str, batch_dict["start"][i])
+                        ),
+                        "end": float(cast(int | float | str, batch_dict["end"][i])),
+                        "salience": int(
+                            cast(int | float | str, batch_dict["salience"][i])
+                        ),
                         "sample_rate": sr,
                         "is_augmented": True,
                         "aug_index": aug_i,
@@ -250,14 +266,16 @@ def process_raw_to_interim(
     if not rows:
         raise ValueError("no clips written to interim; check raw data and drop logs")
 
-    frame = pd.DataFrame(rows)
+    frame: DataFrame = pd.DataFrame(rows)
     frame.to_parquet(metadata_path, index=False)
 
+    train_df: DataFrame
+    eval_df: DataFrame
     train_df, eval_df = fold_split(frame, eval_fold=eval_fold, fold_column="fold")
-    manifest = {
+    manifest: dict[str, object] = {
         "created_at": datetime.now(UTC).isoformat(),
-        "raw_dir": str(raw_dir),
-        "interim_dir": str(interim_dir),
+        "raw_dir": str(raw_dir_path),
+        "interim_dir": str(interim_dir_path),
         "target_sample_rate": target_sr,
         "eval_fold": eval_fold,
         "augment_copies": augment_copies,

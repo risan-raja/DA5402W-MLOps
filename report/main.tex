@@ -68,7 +68,7 @@ Versioning & HF dataset prefixes + model repo (DVC documented) \\
 Serve + Docker & FastAPI three-route API in Compose \\
 Monitoring & Prometheus, Grafana, JSON logs, KS/PSI drift \\
 CI/CD & GitHub Actions: ruff, pytest, image build/push \\
-README & Architecture, setup, API, Docker, tree \\
+README & Setup script + multi-OS install; architecture, API, Docker, tree \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -274,7 +274,10 @@ A multi-service Airflow-plus-API boot inside that runner is a flake source that 
 \label{sec:repro}
 
 The git tree is meant to be cloned without seven gigabytes of wavs.
-\texttt{uv sync} installs the lockfile; Java 17 is the only extra host package PySpark needs.
+The graded bootstrap path is clone, then \texttt{make setup} (or \texttt{bash scripts/setup.sh}): the script checks Python\,3.13+, \texttt{uv}, and Java\,17; seeds \texttt{.env} from \texttt{.env.example} when missing; and runs \texttt{uv sync --locked --group dev}.
+macOS and Linux run natively; on Windows use WSL2 (preferred) or Git Bash for the script.
+Torch on Linux/Windows is CPU-only via the \texttt{uv} indexes in \texttt{pyproject.toml}; macOS host training can use MPS.
+Java 17 remains the only extra host package PySpark needs.
 \texttt{make compose} starts the API, MLflow on host port $5001$ (macOS AirPlay already owns $5000$), Prometheus, and Grafana.
 \texttt{make airflow} starts LocalExecutor with metadata in gitignored \texttt{.airflow/}.
 \texttt{make pull-winner} snapshots \texttt{winner.json} and \texttt{winner/} from the model repo if those directories are absent.
@@ -348,7 +351,7 @@ The CNN's extra $0.09$ holdout F1 comes from cutting the confusions that a bag o
 Lineage in \texttt{winner.json} records the Hub dataset id, processed-set timestamp, tabular SHA, and MLflow run \texttt{9cf8d81bed6b4ea99d91240e1e17133e}.
 A later retrain that does not match that SHA is a different artifact, even if the class name is still \texttt{resnet18}.
 
-Reproducibility for a grader is a short list: clone, \texttt{uv sync}, \texttt{make pull-winner} or a local \texttt{models/winner}, \texttt{make compose}, and \texttt{curl} a sample wav.
+Reproducibility for a grader is a short list: clone, \texttt{make setup}, \texttt{make pull-winner} or a local \texttt{models/winner}, \texttt{make compose}, and \texttt{curl} a sample wav.
 Full training is optional; the Hub model repo is the artifact store the brief asked for.
 The DAG remains the path that created those artifacts, and that is what the viva should walk.
 

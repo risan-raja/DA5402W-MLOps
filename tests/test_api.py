@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import io
 from pathlib import Path
 
@@ -29,21 +31,23 @@ REPO_CONFIG = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
 
 
 def _wav_bytes(sr: int = 16000, seconds: float = 0.25) -> bytes:
-    t = np.linspace(0, seconds, int(sr * seconds), endpoint=False, dtype=np.float32)
-    y = (0.2 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+    t: np.ndarray = np.linspace(
+        0, seconds, int(sr * seconds), endpoint=False, dtype=np.float32
+    )
+    y: np.ndarray = (0.2 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
     buf = io.BytesIO()
     sf.write(buf, y, sr, format="WAV")
     return buf.getvalue()
 
 
 def _write_tabular_winner(models_dir: Path) -> None:
-    names = tabular_feature_names(n_mfcc=13)
+    names: list[str] = tabular_feature_names(n_mfcc=13)
     rng = np.random.default_rng(0)
-    x = rng.normal(size=(40, len(names))).astype(np.float32)
-    y = np.resize(np.arange(len(CLASS_NAMES)), 40)
-    scaler = StandardScaler().fit(x)
+    x: np.ndarray = rng.normal(size=(40, len(names))).astype(np.float32)
+    y: np.ndarray = np.resize(np.arange(len(CLASS_NAMES)), 40)
+    scaler: StandardScaler = StandardScaler().fit(x)
     model = LogisticRegression(max_iter=200).fit(scaler.transform(x), y)
-    dest = models_dir / "rf"
+    dest: Path = models_dir / "rf"
     dest.mkdir(parents=True)
     joblib.dump(model, dest / "model.joblib")
     joblib.dump(scaler, dest / "scaler.joblib")
@@ -58,7 +62,7 @@ def _write_tabular_winner(models_dir: Path) -> None:
 
 
 @pytest.fixture
-def isolated_env(tmp_path, monkeypatch):
+def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("DA5402W_CONFIG", str(REPO_CONFIG))
     monkeypatch.setenv("DA5402W_MODELS_DIR", str(tmp_path / "models"))
     monkeypatch.setenv("DA5402W_MODEL_CACHE", str(tmp_path / "cache"))
@@ -67,7 +71,7 @@ def isolated_env(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_health_ok_without_model(isolated_env):
+def test_health_ok_without_model(isolated_env: Path) -> None:
     with TestClient(app) as client:
         response = client.get("/health")
         missing = client.get("/")
@@ -79,7 +83,7 @@ def test_health_ok_without_model(isolated_env):
     assert "predict_requests_total" in metrics.text
 
 
-def test_predict_503_without_model(isolated_env):
+def test_predict_503_without_model(isolated_env: Path) -> None:
     with TestClient(app) as client:
         response = client.post(
             "/predict",
@@ -88,7 +92,7 @@ def test_predict_503_without_model(isolated_env):
     assert response.status_code == 503
 
 
-def test_predict_rejects_non_wav(isolated_env):
+def test_predict_rejects_non_wav(isolated_env: Path) -> None:
     with TestClient(app) as client:
         response = client.post(
             "/predict",
@@ -98,7 +102,7 @@ def test_predict_rejects_non_wav(isolated_env):
     assert "wav" in response.json()["detail"].lower()
 
 
-def test_predict_rejects_oversize(isolated_env):
+def test_predict_rejects_oversize(isolated_env: Path) -> None:
     payload = b"RIFF" + b"\x00" * (8 * 1024 * 1024)
     with TestClient(app) as client:
         response = client.post(
@@ -108,7 +112,7 @@ def test_predict_rejects_oversize(isolated_env):
     assert response.status_code == 413
 
 
-def test_predict_tabular_winner_contract(isolated_env):
+def test_predict_tabular_winner_contract(isolated_env: Path) -> None:
     _write_tabular_winner(isolated_env / "models")
     with TestClient(app) as client:
         response = client.post(

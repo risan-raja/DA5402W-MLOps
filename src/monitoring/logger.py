@@ -6,7 +6,7 @@ import json
 import logging
 from datetime import UTC, datetime
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 def log_prediction(
@@ -18,7 +18,7 @@ def log_prediction(
     filename: str | None = None,
     status: str = "ok",
 ) -> None:
-    record = {
+    record: dict[str, object] = {
         "event": "prediction",
         "ts": datetime.now(UTC).isoformat(),
         "status": status,

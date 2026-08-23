@@ -1,7 +1,16 @@
 REPO := $(abspath .)
 export PYTHONPATH := $(REPO)
 
-.PHONY: airflow airflow-init compose compose-down pull-winner demo-predict drift-reference drift-score report figures
+.PHONY: setup airflow airflow-init compose compose-down pull-winner demo-predict drift-reference drift-score report figures typecheck type-coverage
+
+setup:
+	bash $(REPO)/scripts/setup.sh
+
+typecheck:
+	uv run --group dev pyrefly check
+
+type-coverage:
+	bash $(REPO)/scripts/verify_type_coverage.sh
 
 airflow-init:
 	mkdir -p $(REPO)/.airflow

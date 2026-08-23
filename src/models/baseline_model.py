@@ -8,13 +8,17 @@ from lightgbm import LGBMClassifier
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 
+from src.model_protocols import SupportsPredictProba
+
 TABULAR_MODELS = ("rf", "xgboost", "lightgbm")
 # Keep single-threaded: sklearn/xgboost/lightgbm OpenMP stacks segfault on macOS
 # when n_jobs=-1 after a previous model family has already loaded libomp.
 _N_JOBS = 1
 
 
-def suggest_params(model_name: str, trial: optuna.Trial, seed: int = 42) -> dict:
+def suggest_params(
+    model_name: str, trial: optuna.Trial, seed: int = 42
+) -> dict[str, object]:
     if model_name == "rf":
         return {
             "n_estimators": trial.suggest_int("n_estimators", 100, 400, step=50),
@@ -59,7 +63,9 @@ def suggest_params(model_name: str, trial: optuna.Trial, seed: int = 42) -> dict
     raise ValueError(f"unknown tabular model '{model_name}'")
 
 
-def build_model(model_name: str, params: dict, n_classes: int):
+def build_model(
+    model_name: str, params: dict[str, object], n_classes: int
+) -> SupportsPredictProba:
     params = dict(params)
     if model_name == "rf":
         return RandomForestClassifier(**params)
@@ -74,15 +80,15 @@ def build_model(model_name: str, params: dict, n_classes: int):
 
 def fit_predict_proba(
     model_name: str,
-    params: dict,
+    params: dict[str, object],
     x_train: np.ndarray,
     y_train: np.ndarray,
     x_eval: np.ndarray,
     sample_weight: np.ndarray | None,
     n_classes: int,
-) -> tuple[object, np.ndarray, np.ndarray]:
-    model = build_model(model_name, params, n_classes=n_classes)
+) -> tuple[SupportsPredictProba, np.ndarray, np.ndarray]:
+    model: SupportsPredictProba = build_model(model_name, params, n_classes=n_classes)
     model.fit(x_train, y_train, sample_weight=sample_weight)
-    proba = model.predict_proba(x_eval)
-    pred = np.argmax(proba, axis=1)
+    proba: np.ndarray = model.predict_proba(x_eval)
+    pred: np.ndarray = np.argmax(proba, axis=1)
     return model, pred, proba
