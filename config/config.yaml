@@ -13,6 +13,8 @@ dataset:
     - "UrbanSound8K.csv"
   interim_allow_patterns:
     - "interim/**"
+  processed_allow_patterns:
+    - "processed/**"
 
 preprocessing:
   # When false, the DAG preprocess_interim task is a no-op (reuse data/interim).

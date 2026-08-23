@@ -7,7 +7,9 @@ import pytest
 from src.data_pipeline.dataset_downloader import (
     _normalize_targets,
     download_dataset,
+    interim_data_present,
     load_config,
+    processed_data_present,
     raw_data_present,
     validate_schema,
 )
@@ -87,8 +89,14 @@ def test_validate_schema_rejects_wrong_class_count():
 def test_normalize_targets_defaults_and_rejects_unknown():
     assert _normalize_targets(None) == ["raw"]
     assert _normalize_targets(["raw", "interim", "raw"]) == ["raw", "interim"]
+    assert _normalize_targets(["processed", "processed"]) == ["processed"]
+    assert _normalize_targets(["raw", "interim", "processed"]) == [
+        "raw",
+        "interim",
+        "processed",
+    ]
     with pytest.raises(ValueError, match="Unknown download target"):
-        _normalize_targets(["processed"])
+        _normalize_targets(["unknown"])
 
 
 def test_raw_data_present_requires_manifest_and_parquet(tmp_path):
@@ -100,6 +108,30 @@ def test_raw_data_present_requires_manifest_and_parquet(tmp_path):
 
     (tmp_path / ".manifest.json").write_text("{}")
     assert raw_data_present(tmp_path) is True
+
+
+def test_interim_data_present_requires_metadata_and_wav(tmp_path):
+    assert interim_data_present(tmp_path) is False
+
+    (tmp_path / "metadata.parquet").write_bytes(b"x")
+    assert interim_data_present(tmp_path) is False
+
+    audio = tmp_path / "audio" / "fold1"
+    audio.mkdir(parents=True)
+    assert interim_data_present(tmp_path) is False
+
+    (audio / "clip.wav").write_bytes(b"RIFF")
+    assert interim_data_present(tmp_path) is True
+
+
+def test_processed_data_present_requires_both_parquets(tmp_path):
+    assert processed_data_present(tmp_path) is False
+
+    (tmp_path / "tabular.parquet").write_bytes(b"x")
+    assert processed_data_present(tmp_path) is False
+
+    (tmp_path / "mels.parquet").write_bytes(b"y")
+    assert processed_data_present(tmp_path) is True
 
 
 def test_versioning_push_enabled(tmp_path):

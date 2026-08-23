@@ -33,11 +33,31 @@ def run_download_raw() -> None:
 
 def run_preprocess_interim() -> None:
     os.chdir(PROJECT_ROOT)
+    from src.data_pipeline.dataset_downloader import (
+        download_dataset,
+        interim_data_present,
+    )
     from src.data_processing.preprocessor import process_raw_to_interim
     from src.data_processing.versioning import config_enabled
 
     if not config_enabled("preprocessing"):
-        logger.info("preprocessing.enabled is false; skipping interim preprocess")
+        interim_dir = PROJECT_ROOT / "data" / "interim"
+        if interim_data_present(interim_dir):
+            logger.info(
+                "preprocessing.enabled is false; reusing interim at %s",
+                interim_dir,
+            )
+            return
+        logger.info(
+            "preprocessing.enabled is false and interim incomplete; "
+            "downloading from Hugging Face"
+        )
+        download_dataset(targets=["interim"], force=False)
+        if not interim_data_present(interim_dir):
+            raise FileNotFoundError(
+                f"interim data still incomplete at {interim_dir} after Hub download. "
+                "Push interim to the dataset repo or run with preprocessing.enabled: true."
+            )
         return
     process_raw_to_interim(force=True)
 
@@ -57,11 +77,31 @@ def run_push_interim_hf() -> None:
 
 def run_spark_feature_extraction() -> None:
     os.chdir(PROJECT_ROOT)
+    from src.data_pipeline.dataset_downloader import (
+        download_dataset,
+        processed_data_present,
+    )
     from src.data_pipeline.spark_feature_extractor import extract_features
     from src.data_processing.versioning import config_enabled, versioning_push_enabled
 
     if not config_enabled("spark"):
-        logger.info("spark.enabled is false; skipping feature extraction")
+        processed_dir = PROJECT_ROOT / "data" / "processed"
+        if processed_data_present(processed_dir):
+            logger.info(
+                "spark.enabled is false; reusing processed at %s",
+                processed_dir,
+            )
+            return
+        logger.info(
+            "spark.enabled is false and processed incomplete; "
+            "downloading from Hugging Face"
+        )
+        download_dataset(targets=["processed"], force=False)
+        if not processed_data_present(processed_dir):
+            raise FileNotFoundError(
+                f"processed data still incomplete at {processed_dir} after Hub download. "
+                "Push processed to the dataset repo or run with spark.enabled: true."
+            )
         return
     extract_features(force=True, push=versioning_push_enabled("push_processed"))
 

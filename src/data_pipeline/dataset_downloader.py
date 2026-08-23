@@ -1,4 +1,4 @@
-"""Fetch UrbanSound8K raw and/or versioned interim from one HF dataset repo."""
+"""Fetch UrbanSound8K raw, interim, and/or processed from one HF dataset repo."""
 
 from __future__ import annotations
 
@@ -17,7 +17,11 @@ logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = ROOT / "config" / "config.yaml"
 MANIFEST_FILENAME = ".manifest.json"
-VALID_TARGETS = frozenset({"raw", "interim"})
+METADATA_FILENAME = "metadata.parquet"
+AUDIO_DIRNAME = "audio"
+TABULAR_FILENAME = "tabular.parquet"
+MELS_FILENAME = "mels.parquet"
+VALID_TARGETS = frozenset({"raw", "interim", "processed"})
 
 
 def load_full_config(config_path: Path = CONFIG_PATH) -> dict:
@@ -45,6 +49,34 @@ def raw_data_present(local_raw_dir: Path | str | None = None) -> bool:
     if not parquet_dir.is_dir():
         return False
     return any(parquet_dir.glob("*.parquet"))
+
+
+def interim_data_present(local_interim_dir: Path | str | None = None) -> bool:
+    """True when interim has ``metadata.parquet`` and at least one wav under ``audio/``."""
+    if local_interim_dir is None:
+        local_interim_dir = Path(
+            load_full_config()["preprocessing"]["local_interim_dir"]
+        )
+    else:
+        local_interim_dir = Path(local_interim_dir)
+    metadata_path = local_interim_dir / METADATA_FILENAME
+    audio_dir = local_interim_dir / AUDIO_DIRNAME
+    if not metadata_path.is_file():
+        return False
+    if not audio_dir.is_dir():
+        return False
+    return any(audio_dir.rglob("*.wav"))
+
+
+def processed_data_present(local_processed_dir: Path | str | None = None) -> bool:
+    """True when processed has both ``tabular.parquet`` and ``mels.parquet``."""
+    if local_processed_dir is None:
+        local_processed_dir = Path(load_full_config()["spark"]["local_processed_dir"])
+    else:
+        local_processed_dir = Path(local_processed_dir)
+    return (local_processed_dir / TABULAR_FILENAME).is_file() and (
+        local_processed_dir / MELS_FILENAME
+    ).is_file()
 
 
 def _read_existing_manifest(local_dir: Path) -> dict | None:
@@ -195,7 +227,7 @@ def _download_interim(
         allow_patterns=patterns,
     )
 
-    metadata_path = local_interim_dir / "metadata.parquet"
+    metadata_path = local_interim_dir / METADATA_FILENAME
     if not metadata_path.exists():
         raise FileNotFoundError(
             f"interim download finished but {metadata_path} is missing. "
@@ -215,17 +247,77 @@ def _download_interim(
     return manifest
 
 
+def _download_processed(
+    full_config: dict,
+    revision: str,
+    *,
+    force: bool,
+) -> dict:
+    dataset_cfg = full_config["dataset"]
+    spark_cfg = full_config["spark"]
+    local_processed_dir = Path(spark_cfg["local_processed_dir"])
+    data_root = local_processed_dir.parent
+    data_root.mkdir(parents=True, exist_ok=True)
+
+    existing = _read_existing_manifest(local_processed_dir)
+    if not force and existing is not None and existing.get("revision") == revision:
+        logger.info("Processed already at revision %s, skipping download", revision)
+        return existing
+
+    patterns = dataset_cfg.get("processed_allow_patterns", ["processed/**"])
+    path_in_repo = full_config.get("versioning", {}).get(
+        "processed_path_in_repo", "processed"
+    )
+    logger.info(
+        "Downloading processed from %s (revision %s) into %s",
+        dataset_cfg["hf_repo_id"],
+        revision,
+        local_processed_dir,
+    )
+    snapshot_download(
+        repo_id=dataset_cfg["hf_repo_id"],
+        repo_type=dataset_cfg["hf_repo_type"],
+        revision=revision,
+        local_dir=str(data_root),
+        allow_patterns=patterns,
+    )
+
+    tabular_path = local_processed_dir / TABULAR_FILENAME
+    mels_path = local_processed_dir / MELS_FILENAME
+    missing = [p.name for p in (tabular_path, mels_path) if not p.exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"processed download finished but missing {missing} under "
+            f"{local_processed_dir}. Push processed to {dataset_cfg['hf_repo_id']} "
+            f"under {path_in_repo}/ first."
+        )
+
+    manifest = {
+        "target": "processed",
+        "hf_repo_id": dataset_cfg["hf_repo_id"],
+        "revision": revision,
+        "downloaded_at": datetime.now(UTC).isoformat(),
+        "local_processed_dir": str(local_processed_dir),
+        "has_tabular": True,
+        "has_mels": True,
+    }
+    _write_manifest(local_processed_dir, manifest)
+    logger.info("Processed downloaded and manifest written: %s", manifest)
+    return manifest
+
+
 def download_dataset(
     config: dict | None = None,
     force: bool = False,
     allow_patterns: list[str] | None = None,
     targets: list[str] | tuple[str, ...] | None = None,
 ) -> dict:
-    """Download from ``dataset.hf_repo_id`` (raw parquet and/or ``interim/``).
+    """Download from ``dataset.hf_repo_id`` (raw, ``interim/``, and/or ``processed/``).
 
-    ``targets`` defaults to ``["raw"]``. Use ``["interim"]`` or ``["raw", "interim"]``
-    to pull versioned cleaned audio. Raw-only returns the raw manifest dict (tests /
-    existing callers). Multi-target returns ``{revision, hf_repo_id, raw?, interim?}``.
+    ``targets`` defaults to ``["raw"]``. Use ``["interim"]``, ``["processed"]``, or
+    combinations to pull versioned pipeline outputs. Raw-only returns the raw
+    manifest dict (tests / existing callers). Multi-target returns
+    ``{revision, hf_repo_id, raw?, interim?, processed?}``.
     """
     full_config = load_full_config()
     if config is not None:
@@ -247,6 +339,8 @@ def download_dataset(
         )
     if "interim" in selected:
         results["interim"] = _download_interim(full_config, revision, force=force)
+    if "processed" in selected:
+        results["processed"] = _download_processed(full_config, revision, force=force)
 
     if selected == ["raw"]:
         return results["raw"]
@@ -258,14 +352,19 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(
-        description="Download raw and/or interim from the project HF dataset repo"
+        description=(
+            "Download raw, interim, and/or processed from the project HF dataset repo"
+        )
     )
     parser.add_argument(
         "--target",
         action="append",
         dest="targets",
         choices=sorted(VALID_TARGETS),
-        help="Repeatable. Default: raw. Example: --target raw --target interim",
+        help=(
+            "Repeatable. Default: raw. "
+            "Example: --target raw --target interim --target processed"
+        ),
     )
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
