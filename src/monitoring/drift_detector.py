@@ -169,8 +169,8 @@ def ks_statistic(
     ref_samples: Sequence[float],
     live_samples: Sequence[float],
 ) -> float:
-    ref = np.asarray(ref_samples, dtype=np.float64)
-    live = np.asarray(live_samples, dtype=np.float64)
+    ref: np.ndarray = np.asarray(ref_samples, dtype=np.float64)
+    live: np.ndarray = np.asarray(live_samples, dtype=np.float64)
     if ref.size == 0 or live.size == 0:
         raise ValueError("KS requires non-empty reference and live samples")
     return float(ks_2samp(ref, live, method="asymp").statistic)
@@ -180,12 +180,12 @@ def confidence_quantiles(
     samples: Sequence[float],
     n_quantiles: int = N_QUANTILES,
 ) -> tuple[float, ...]:
-    values = np.asarray(samples, dtype=np.float64)
+    values: np.ndarray = np.asarray(samples, dtype=np.float64)
     if values.size == 0:
         return ()
     if n_quantiles < 2:
         raise ValueError("n_quantiles must be >= 2")
-    probs = np.linspace(0.0, 1.0, n_quantiles)
+    probs: np.ndarray = np.linspace(0.0, 1.0, n_quantiles)
     return tuple(float(v) for v in np.quantile(values, probs))
 
 
@@ -198,15 +198,15 @@ def build_feature_histograms(
         raise ValueError("n_bins must be >= 2")
     histograms: dict[str, FeatureHistogram] = {}
     for name, raw in columns.items():
-        values = np.asarray(raw, dtype=np.float64)
+        values: np.ndarray = np.asarray(raw, dtype=np.float64)
         values = values[np.isfinite(values)]
         if values.size == 0:
             continue
         counts, edges = np.histogram(values, bins=n_bins)
-        total = float(counts.sum())
+        total: float = float(counts.sum())
         if total <= 0:
             continue
-        density = tuple(float(c) / total for c in counts)
+        density: tuple[float, ...] = tuple(float(c) / total for c in counts)
         histograms[str(name)] = FeatureHistogram(
             edges=tuple(float(e) for e in edges),
             density=density,
@@ -220,20 +220,22 @@ def feature_column_psi(
     *,
     eps: float = PSI_EPS,
 ) -> float:
-    live = np.asarray(values, dtype=np.float64)
+    live: np.ndarray = np.asarray(values, dtype=np.float64)
     live = live[np.isfinite(live)]
     if live.size == 0:
         raise ValueError("feature PSI requires non-empty live values")
-    edges = np.asarray(histogram.edges, dtype=np.float64)
-    clipped = np.clip(live, edges[0], edges[-1])
+    edges: np.ndarray = np.asarray(histogram.edges, dtype=np.float64)
+    clipped: np.ndarray = np.clip(live, edges[0], edges[-1])
     counts, _ = np.histogram(clipped, bins=edges)
     total = float(counts.sum())
     if total <= 0:
         raise ValueError("feature PSI histogram is empty")
-    expected = {
+    expected: dict[str, float] = {
         str(i): float(density) for i, density in enumerate(histogram.density)
     }
-    actual = {str(i): float(count) / total for i, count in enumerate(counts)}
+    actual: dict[str, float] = {
+        str(i): float(count) / total for i, count in enumerate(counts)
+    }
     return population_stability_index(expected, actual, eps=eps)
 
 

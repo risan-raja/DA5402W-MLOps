@@ -31,12 +31,12 @@ _REQUIRED_TOP_LEVEL: tuple[str, ...] = (
 
 def load_app_config(path: Path | None = None) -> AppConfig:
     """Load YAML config, require top-level sections, return as ``AppConfig``."""
-    config_path = path if path is not None else DEFAULT_CONFIG_PATH
+    config_path: Path = path if path is not None else DEFAULT_CONFIG_PATH
     with open(config_path) as handle:
-        loaded = yaml.safe_load(handle)
+        loaded: object = yaml.safe_load(handle)
     if not isinstance(loaded, dict):
         raise TypeError(f"invalid config (expected mapping): {config_path}")
-    missing = [key for key in _REQUIRED_TOP_LEVEL if key not in loaded]
+    missing: list[str] = [key for key in _REQUIRED_TOP_LEVEL if key not in loaded]
     if missing:
         raise KeyError(f"config missing required top-level keys {missing}: {config_path}")
     return cast(AppConfig, loaded)

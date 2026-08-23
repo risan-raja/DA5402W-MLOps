@@ -77,17 +77,17 @@ def extract_clip_features(
     """Return ``{"tabular": dict, "mel": dict}`` or None if the clip cannot be read."""
     try:
         y, sr = decode_wav(abs_wav_path)
-        sample_rate = int(spark_cfg["sample_rate"])
+        sample_rate: int = int(spark_cfg["sample_rate"])
         y = prepare_waveform(
             y,
             sr,
             sample_rate=sample_rate,
             duration_sec=float(spark_cfg["target_duration_sec"]),
         )
-        tabular_feats = extract_tabular_features(
+        tabular_feats: dict[str, float] = extract_tabular_features(
             y, sample_rate, n_mfcc=int(spark_cfg["n_mfcc"])
         )
-        log_mel = extract_log_mel(
+        log_mel: np.ndarray = extract_log_mel(
             y,
             sample_rate,
             n_mels=int(spark_cfg["n_mels"]),
@@ -99,9 +99,9 @@ def extract_clip_features(
         logger.warning("Dropping %s: %s", abs_wav_path, exc)
         return None
 
-    meta_out = {k: meta[k] for k in META_COLS}
-    tabular = {**meta_out, **tabular_feats}
-    mel = {
+    meta_out: dict[str, object] = {k: meta[k] for k in META_COLS}
+    tabular: dict[str, object] = {**meta_out, **tabular_feats}
+    mel: dict[str, object] = {
         **meta_out,
         "mel": log_mel.reshape(-1).astype(np.float32).tolist(),
         "mel_height": int(log_mel.shape[0]),
@@ -252,38 +252,38 @@ def extract_features(
     max_rows: int | None = None,
     force: bool = False,
 ) -> dict[str, object]:
-    full = config if config is not None else load_full_config()
+    full: AppConfig = config if config is not None else load_full_config()
     prep = full["preprocessing"]
-    spark_cfg = full["spark"]
-    interim_dir = Path(interim_dir or prep["local_interim_dir"])
-    processed_dir = Path(processed_dir or spark_cfg["local_processed_dir"])
-    if not interim_dir.is_absolute():
-        interim_dir = ROOT / interim_dir
-    if not processed_dir.is_absolute():
-        processed_dir = ROOT / processed_dir
+    spark_cfg: SparkConfig = full["spark"]
+    interim_path: Path = Path(interim_dir or prep["local_interim_dir"])
+    processed_path: Path = Path(processed_dir or spark_cfg["local_processed_dir"])
+    if not interim_path.is_absolute():
+        interim_path = ROOT / interim_path
+    if not processed_path.is_absolute():
+        processed_path = ROOT / processed_path
 
-    metadata_path = interim_dir / "metadata.parquet"
+    metadata_path: Path = interim_path / "metadata.parquet"
     if not metadata_path.exists():
         raise FileNotFoundError(f"missing interim metadata: {metadata_path}")
 
-    tabular_path = processed_dir / TABULAR_FILENAME
-    mels_path = processed_dir / MELS_FILENAME
-    manifest_path = processed_dir / MANIFEST_FILENAME
+    tabular_path: Path = processed_path / TABULAR_FILENAME
+    mels_path: Path = processed_path / MELS_FILENAME
+    manifest_path: Path = processed_path / MANIFEST_FILENAME
     if tabular_path.exists() and mels_path.exists() and not force:
         logger.info("Processed outputs already exist (pass force=True to redo)")
         with open(manifest_path) as f:
             return json.load(f)
 
-    meta = pd.read_parquet(metadata_path)
+    meta: pd.DataFrame = pd.read_parquet(metadata_path)
     if max_rows is not None:
         meta = meta.head(max_rows)
-    records = meta.to_dict(orient="records")
+    records: list[dict[str, object]] = meta.to_dict(orient="records")
     for row in records:
-        row["_abs_path"] = str(interim_dir / row["path"])
+        row["_abs_path"] = str(interim_path / cast(str, row["path"]))
 
-    feature_names = tabular_feature_names(n_mfcc=int(spark_cfg["n_mfcc"]))
-    processed_dir.mkdir(parents=True, exist_ok=True)
-    work_dir = processed_dir / "_spark_work"
+    feature_names: list[str] = tabular_feature_names(n_mfcc=int(spark_cfg["n_mfcc"]))
+    processed_path.mkdir(parents=True, exist_ok=True)
+    work_dir: Path = processed_path / "_spark_work"
     if work_dir.exists():
         shutil.rmtree(work_dir)
     work_dir.mkdir(parents=True)
@@ -291,12 +291,12 @@ def extract_features(
     os.environ["PYSPARK_PYTHON"] = sys.executable
     os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
 
-    batch_size = int(spark_cfg.get("batch_size", 256))
-    num_partitions = int(spark_cfg.get("num_partitions", 2))
-    driver_memory = spark_cfg.get("driver_memory", "1g")
-    max_result_size = spark_cfg.get("max_result_size", "512m")
+    batch_size: int = int(spark_cfg.get("batch_size", 256))
+    num_partitions: int = int(spark_cfg.get("num_partitions", 2))
+    driver_memory: str = spark_cfg.get("driver_memory", "1g")
+    max_result_size: str = spark_cfg.get("max_result_size", "512m")
 
-    spark = (
+    spark: SparkSession = (
         SparkSession.builder.master(spark_cfg["master"])
         .appName(spark_cfg["app_name"])
         .config("spark.driver.memory", driver_memory)
@@ -310,8 +310,8 @@ def extract_features(
     )
     spark.sparkContext.setLogLevel("WARN")
 
-    kept = 0
-    dropped = 0
+    kept: int = 0
+    dropped: int = 0
     tab_batch_files: list[Path] = []
     mel_batch_files: list[Path] = []
     try:
@@ -322,14 +322,14 @@ def extract_features(
                 len(batch),
                 batch_size,
             )
-            parts = min(num_partitions, len(batch))
+            parts: int = min(num_partitions, len(batch))
             rdd = spark.sparkContext.parallelize(batch, parts)
             # Cache only this small batch (~batch_size clips), then drop it.
             extracted = rdd.mapPartitions(
                 lambda part: _extract_partition(part, spark_cfg)
             ).cache()
-            batch_kept = extracted.count()
-            batch_dropped = len(batch) - batch_kept
+            batch_kept: int = extracted.count()
+            batch_dropped: int = len(batch) - batch_kept
             kept += batch_kept
             dropped += batch_dropped
             if batch_kept == 0:
@@ -343,10 +343,10 @@ def extract_features(
             )
             mel_df = spark.createDataFrame(mel_rdd, schema=_mel_schema())
 
-            tab_tmp = work_dir / f"tab_batch_{batch_idx}"
-            mel_tmp = work_dir / f"mel_batch_{batch_idx}"
-            tab_out = work_dir / f"tabular_batch_{batch_idx}.parquet"
-            mel_out = work_dir / f"mels_batch_{batch_idx}.parquet"
+            tab_tmp: Path = work_dir / f"tab_batch_{batch_idx}"
+            mel_tmp: Path = work_dir / f"mel_batch_{batch_idx}"
+            tab_out: Path = work_dir / f"tabular_batch_{batch_idx}.parquet"
+            mel_out: Path = work_dir / f"mels_batch_{batch_idx}.parquet"
             tab_df.write.mode("overwrite").parquet(str(tab_tmp))
             mel_df.write.mode("overwrite").parquet(str(mel_tmp))
             extracted.unpersist()
@@ -365,10 +365,10 @@ def extract_features(
     _stream_merge_files(mel_batch_files, mels_path)
     shutil.rmtree(work_dir, ignore_errors=True)
 
-    manifest = {
+    manifest: dict[str, object] = {
         "created_at": datetime.now(UTC).isoformat(),
-        "interim_dir": str(interim_dir),
-        "processed_dir": str(processed_dir),
+        "interim_dir": str(interim_path),
+        "processed_dir": str(processed_path),
         "num_input_rows": len(records),
         "num_written": kept,
         "num_dropped": dropped,
@@ -384,12 +384,14 @@ def extract_features(
         json.dump(manifest, f, indent=2)
     logger.info("Wrote processed features: %s", manifest)
 
-    should_push = push or bool(full.get("versioning", {}).get("push_processed", False))
+    should_push: bool = push or bool(
+        full.get("versioning", {}).get("push_processed", False)
+    )
     if should_push:
-        path_in_repo = full.get("versioning", {}).get(
+        path_in_repo: str = full.get("versioning", {}).get(
             "processed_path_in_repo", "processed"
         )
-        push_dataset_tree(processed_dir, path_in_repo)
+        push_dataset_tree(processed_path, path_in_repo)
         manifest["pushed_path_in_repo"] = path_in_repo
         with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2)

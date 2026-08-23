@@ -17,7 +17,7 @@ from torch import nn
 
 from src.artifact_types import MelStats, WinnerPayload
 from src.config import load_app_config
-from src.config_types import AppConfig
+from src.config_types import AppConfig, DriftMonitoringConfig, VersioningConfig
 from src.model_protocols import SupportsPredictProba, SupportsTransform
 from src.models.cnn_model import build_resnet18
 from src.models.runtime_env import ROOT
@@ -176,11 +176,11 @@ def download_winner(
     config: AppConfig,
     token: str | None = None,
 ) -> Path:
-    vcfg = config["versioning"]
-    repo_id = vcfg.get("hf_model_repo_id")
+    vcfg: VersioningConfig = config["versioning"]
+    repo_id: str | None = vcfg.get("hf_model_repo_id")
     if not repo_id:
         raise ValueError("versioning.hf_model_repo_id is not set")
-    repo_type = str(vcfg.get("hf_model_repo_type", "model"))
+    repo_type: str = str(vcfg.get("hf_model_repo_type", "model"))
     dest.mkdir(parents=True, exist_ok=True)
     snapshot_download(
         repo_id=str(repo_id),
@@ -201,22 +201,22 @@ def resolve_artifact_dir(
     cache: Path,
 ) -> tuple[Path, str]:
     """Resolve winner/ or a named model dir, optionally pulling from Hub."""
-    payload = winner_payload(models_root)
-    winner_dir = models_root / "winner"
-    winner_family = infer_family(winner_dir)
+    payload: WinnerPayload | None = winner_payload(models_root)
+    winner_dir: Path = models_root / "winner"
+    winner_family: str | None = infer_family(winner_dir)
     if payload and winner_family is not None:
         return winner_dir, str(payload["model_name"])
     if winner_family is not None:
-        name = "resnet18" if winner_family == "cnn" else "rf"
+        name: str = "resnet18" if winner_family == "cnn" else "rf"
         return winner_dir, name
     if payload:
-        named = _named_dir(models_root, str(payload["model_name"]))
+        named: Path | None = _named_dir(models_root, str(payload["model_name"]))
         if named is not None:
             return named, str(payload["model_name"])
     if pull:
         download_winner(cache, config=config, token=os.environ.get("HF_TOKEN"))
-        cache_payload = winner_payload(cache)
-        cache_winner = cache / "winner"
+        cache_payload: WinnerPayload | None = winner_payload(cache)
+        cache_winner: Path = cache / "winner"
         if infer_family(cache_winner) is None:
             raise FileNotFoundError(f"Hub snapshot missing winner/ under {cache}")
         name = (
@@ -232,12 +232,14 @@ def resolve_artifact_dir(
 
 
 def drift_enabled(config: AppConfig) -> bool:
-    dcfg = config.get("monitoring", {}).get("drift", {})
+    dcfg: DriftMonitoringConfig | dict[str, object] = (
+        config.get("monitoring", {}).get("drift", {})
+    )
     return bool(dcfg.get("enabled", True))
 
 
 def drift_window_size(config: AppConfig) -> int:
-    raw = os.environ.get("DA5402W_DRIFT_WINDOW")
+    raw: str | None = os.environ.get("DA5402W_DRIFT_WINDOW")
     if raw:
         return max(1, int(raw))
     dcfg = config.get("monitoring", {}).get("drift", {})
@@ -246,20 +248,24 @@ def drift_window_size(config: AppConfig) -> int:
 
 def resolve_drift_reference_path(config: AppConfig, models_root: Path) -> Path:
     dcfg = config.get("monitoring", {}).get("drift", {})
-    raw = Path(dcfg.get("reference_path", "models/drift_reference.json"))
-    if raw.is_absolute():
-        return raw
-    candidates = (models_root / raw.name, models_root / raw, ROOT / raw)
+    raw_path: Path = Path(dcfg.get("reference_path", "models/drift_reference.json"))
+    if raw_path.is_absolute():
+        return raw_path
+    candidates: tuple[Path, ...] = (
+        models_root / raw_path.name,
+        models_root / raw_path,
+        ROOT / raw_path,
+    )
     for candidate in candidates:
         if candidate.is_file():
             return candidate
-    return models_root / raw.name
+    return models_root / raw_path.name
 
 
 def load_drift_monitor(config: AppConfig, models_root: Path) -> DriftMonitor | None:
     if not drift_enabled(config):
         return None
-    path = resolve_drift_reference_path(config, models_root)
+    path: Path = resolve_drift_reference_path(config, models_root)
     if not path.is_file():
         logger.warning("drift reference missing at %s; drift gauges disabled", path)
         return None
@@ -282,39 +288,39 @@ def load_serving_state(
     cache: Path | None = None,
     pull: bool | None = None,
 ) -> ServingState:
-    models_root = models_root or models_dir()
-    cache = cache or cache_dir()
-    pull = pull_enabled() if pull is None else pull
+    resolved_models: Path = models_root or models_dir()
+    resolved_cache: Path = cache or cache_dir()
+    pull_flag: bool = pull_enabled() if pull is None else pull
     try:
-        cfg = config if config is not None else load_config()
+        cfg: AppConfig = config if config is not None else load_config()
     except (OSError, TypeError, ValueError, KeyError) as exc:
         logger.exception("Failed to load serving config")
         return ServingState(
             model=None,
             config=_empty_config(),
-            models_dir=models_root,
+            models_dir=resolved_models,
             error=str(exc),
         )
     try:
         artifact_dir, model_name = resolve_artifact_dir(
-            models_root, config=cfg, pull=pull, cache=cache
+            resolved_models, config=cfg, pull=pull_flag, cache=resolved_cache
         )
-        loaded = load_artifact_dir(artifact_dir, model_name)
+        loaded: LoadedModel = load_artifact_dir(artifact_dir, model_name)
         logger.info(
             "Loaded %s (%s) from %s", loaded.model_name, loaded.family, artifact_dir
         )
         return ServingState(
             model=loaded,
             config=cfg,
-            models_dir=models_root,
-            drift_monitor=load_drift_monitor(cfg, models_root),
+            models_dir=resolved_models,
+            drift_monitor=load_drift_monitor(cfg, resolved_models),
         )
     except Exception as exc:
         logger.exception("Winner model not loaded")
         return ServingState(
             model=None,
             config=cfg,
-            models_dir=models_root,
+            models_dir=resolved_models,
             error=str(exc),
-            drift_monitor=load_drift_monitor(cfg, models_root),
+            drift_monitor=load_drift_monitor(cfg, resolved_models),
         )

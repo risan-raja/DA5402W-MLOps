@@ -87,8 +87,8 @@ def fit_predict_proba(
     sample_weight: np.ndarray | None,
     n_classes: int,
 ) -> tuple[SupportsPredictProba, np.ndarray, np.ndarray]:
-    model = build_model(model_name, params, n_classes=n_classes)
+    model: SupportsPredictProba = build_model(model_name, params, n_classes=n_classes)
     model.fit(x_train, y_train, sample_weight=sample_weight)
-    proba = model.predict_proba(x_eval)
-    pred = np.argmax(proba, axis=1)
+    proba: np.ndarray = model.predict_proba(x_eval)
+    pred: np.ndarray = np.argmax(proba, axis=1)
     return model, pred, proba

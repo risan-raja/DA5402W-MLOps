@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
+
+from tests.config_helpers import write_app_config
 
 import pyarrow as pa
 import pyarrow.dataset as ds
 import pytest
 
+from src.artifact_types import SchemaValidationResult
+from src.config_types import DatasetConfig
 from src.data_pipeline.dataset_downloader import (
     _normalize_targets,
     download_dataset,
@@ -25,7 +30,7 @@ from src.data_processing.versioning import (
     versioning_push_enabled,
 )
 
-CONFIG = {
+CONFIG: DatasetConfig | dict[str, object] = {
     "expected_rows": 4,
     "fold_column": "fold",
     "label_column": "class",
@@ -34,29 +39,31 @@ CONFIG = {
 }
 
 
-def _table(rows: dict) -> ds.Dataset:
+def _table(rows: dict[str, list[object]]) -> ds.Dataset:
     return ds.dataset(pa.Table.from_pydict(rows))
 
 
 def test_validate_schema_accepts_matching_data() -> None:
-    table = _table(
+    table: ds.Dataset = _table(
         {
             "fold": [1, 2, 3, 4],
             "class": ["dog_bark", "siren", "dog_bark", "siren"],
         }
     )
-    stats = validate_schema(table, CONFIG)
+    stats: SchemaValidationResult = validate_schema(table, CONFIG)
     assert stats == {"num_rows": 4, "num_classes": 2}
 
 
 def test_validate_schema_rejects_wrong_row_count() -> None:
-    table = _table({"fold": [1, 2, 3], "class": ["dog_bark", "siren", "dog_bark"]})
+    table: ds.Dataset = _table(
+        {"fold": [1, 2, 3], "class": ["dog_bark", "siren", "dog_bark"]}
+    )
     with pytest.raises(ValueError, match="Row count mismatch"):
         validate_schema(table, CONFIG)
 
 
 def test_validate_schema_rejects_missing_fold_column() -> None:
-    table = _table(
+    table: ds.Dataset = _table(
         {
             "not_fold": [1, 2, 3, 4],
             "class": ["dog_bark", "siren", "dog_bark", "siren"],
@@ -67,7 +74,7 @@ def test_validate_schema_rejects_missing_fold_column() -> None:
 
 
 def test_validate_schema_rejects_fold_out_of_range() -> None:
-    table = _table(
+    table: ds.Dataset = _table(
         {
             "fold": [1, 2, 3, 11],
             "class": ["dog_bark", "siren", "dog_bark", "siren"],
@@ -78,7 +85,7 @@ def test_validate_schema_rejects_fold_out_of_range() -> None:
 
 
 def test_validate_schema_rejects_wrong_class_count() -> None:
-    table = _table(
+    table: ds.Dataset = _table(
         {
             "fold": [1, 2, 3, 4],
             "class": ["dog_bark", "siren", "gun_shot", "engine_idling"],
@@ -118,7 +125,7 @@ def test_interim_data_present_requires_metadata_and_wav(tmp_path: Path) -> None:
     (tmp_path / "metadata.parquet").write_bytes(b"x")
     assert interim_data_present(tmp_path) is False
 
-    audio = tmp_path / "audio" / "fold1"
+    audio: Path = tmp_path / "audio" / "fold1"
     audio.mkdir(parents=True)
     assert interim_data_present(tmp_path) is False
 
@@ -137,11 +144,15 @@ def test_processed_data_present_requires_both_parquets(tmp_path: Path) -> None:
 
 
 def test_versioning_push_enabled(tmp_path: Path) -> None:
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text(
-        "dataset:\n  hf_repo_id: example/repo\n"
-        "versioning:\n  push_interim: true\n  push_processed: false\n"
-        "  push_models: true\n"
+    cfg: Path = tmp_path / "config.yaml"
+    write_app_config(
+        cfg,
+        dataset={"hf_repo_id": "example/repo"},
+        versioning={
+            "push_interim": True,
+            "push_processed": False,
+            "push_models": True,
+        },
     )
     assert versioning_push_enabled("push_interim", config_path=cfg) is True
     assert versioning_push_enabled("push_processed", config_path=cfg) is False
@@ -150,26 +161,33 @@ def test_versioning_push_enabled(tmp_path: Path) -> None:
 
 
 def test_config_enabled_section_flags(tmp_path: Path) -> None:
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text("preprocessing:\n  enabled: false\nspark:\n  enabled: true\n")
+    cfg: Path = tmp_path / "config.yaml"
+    write_app_config(
+        cfg,
+        preprocessing={"enabled": False},
+        spark={"enabled": True},
+    )
     assert config_enabled("preprocessing", config_path=cfg) is False
     assert config_enabled("spark", config_path=cfg) is True
     assert config_enabled("missing_section", config_path=cfg) is True
 
 
 def test_resolve_model_repo_id(tmp_path: Path) -> None:
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text(
-        "dataset:\n  hf_repo_id: example/ds\n"
-        "versioning:\n  hf_model_repo_id: org/models\n  hf_model_repo_type: model\n"
+    cfg: Path = tmp_path / "config.yaml"
+    write_app_config(
+        cfg,
+        dataset={"hf_repo_id": "example/ds"},
+        versioning={"hf_model_repo_id": "org/models", "hf_model_repo_type": "model"},
     )
     assert resolve_model_repo_id(config_path=cfg) == ("org/models", "model")
 
 
 def test_resolve_model_repo_id_requires_id(tmp_path: Path) -> None:
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text(
-        "dataset:\n  hf_repo_id: example/ds\nversioning:\n  path_in_repo: interim\n"
+    cfg: Path = tmp_path / "config.yaml"
+    write_app_config(
+        cfg,
+        dataset={"hf_repo_id": "example/ds"},
+        versioning={"path_in_repo": "interim"},
     )
     with pytest.raises(ValueError, match="hf_model_repo_id"):
         resolve_model_repo_id(config_path=cfg)
@@ -189,18 +207,21 @@ def test_push_winner_artifacts_requires_json_and_dir(tmp_path: Path) -> None:
         push_winner_artifacts(tmp_path)
 
 
-def test_push_all_trained_models_uploads_each_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text(
-        "dataset:\n  hf_repo_id: example/ds\n"
-        "versioning:\n  hf_model_repo_id: org/models\n  hf_model_repo_type: model\n"
+def test_push_all_trained_models_uploads_each_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg: Path = tmp_path / "config.yaml"
+    write_app_config(
+        cfg,
+        dataset={"hf_repo_id": "example/ds"},
+        versioning={"hf_model_repo_id": "org/models", "hf_model_repo_type": "model"},
     )
-    models_dir = tmp_path / "models"
+    models_dir: Path = tmp_path / "models"
     for name in TRAINED_MODEL_DIRS:
         (models_dir / name).mkdir(parents=True)
     uploaded: list[str] = []
 
-    def _fake_push(local_dir, path_in_repo, **_kwargs):
+    def _fake_push(local_dir: Path, path_in_repo: str, **_kwargs: Any) -> str:
         uploaded.append(path_in_repo)
         return "ok"
 
@@ -209,16 +230,19 @@ def test_push_all_trained_models_uploads_each_dir(tmp_path: Path, monkeypatch: p
     assert uploaded == list(TRAINED_MODEL_DIRS)
 
 
-def test_pull_winner_artifacts_downloads_allow_patterns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text(
-        "dataset:\n  hf_repo_id: example/ds\n"
-        "versioning:\n  hf_model_repo_id: org/models\n  hf_model_repo_type: model\n"
+def test_pull_winner_artifacts_downloads_allow_patterns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg: Path = tmp_path / "config.yaml"
+    write_app_config(
+        cfg,
+        dataset={"hf_repo_id": "example/ds"},
+        versioning={"hf_model_repo_id": "org/models", "hf_model_repo_type": "model"},
     )
-    dest = tmp_path / "models"
-    called: dict = {}
+    dest: Path = tmp_path / "models"
+    called: dict[str, object] = {}
 
-    def _fake_snapshot(**kwargs):
+    def _fake_snapshot(**kwargs: Any) -> None:
         called.update(kwargs)
         Path(kwargs["local_dir"]).mkdir(parents=True, exist_ok=True)
 
@@ -232,24 +256,24 @@ def test_pull_winner_artifacts_downloads_allow_patterns(tmp_path: Path, monkeypa
 
 
 def test_dag_project_root_is_repo_root() -> None:
-    dag_file = (
+    dag_file: Path = (
         Path(__file__).resolve().parents[1]
         / "airflow"
         / "dags"
         / "audio_classification_dag.py"
     )
-    project_root = dag_file.parents[2]
+    project_root: Path = dag_file.parents[2]
     assert (project_root / "src" / "models" / "train.py").is_file()
     assert (project_root / "config" / "config.yaml").is_file()
 
 
 @pytest.mark.integration
 def test_download_dataset_end_to_end(tmp_path: Path) -> None:
-    config = load_config()
+    config: DatasetConfig = load_config()
     config["local_raw_dir"] = str(tmp_path)
     config["expected_rows"] = 546
     config["expected_num_classes"] = 10
-    manifest = download_dataset(
+    manifest: dict[str, object] = download_dataset(
         config,
         allow_patterns=["data/train-00000-of-00016-e478d7cccca6a095.parquet"],
     )

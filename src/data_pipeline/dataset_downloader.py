@@ -14,7 +14,13 @@ from huggingface_hub import HfApi, snapshot_download
 
 from src.artifact_types import SchemaValidationResult
 from src.config import DEFAULT_CONFIG_PATH, load_app_config, load_dataset_config
-from src.config_types import AppConfig, DatasetConfig
+from src.config_types import (
+    AppConfig,
+    DatasetConfig,
+    PreprocessingConfig,
+    SparkConfig,
+    VersioningConfig,
+)
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -96,15 +102,15 @@ def processed_data_present(local_processed_dir: Path | str | None = None) -> boo
     ).is_file()
 
 
-def _read_existing_manifest(local_dir: Path) -> dict | None:
+def _read_existing_manifest(local_dir: Path) -> dict[str, object] | None:
     manifest_path = _manifest_path(local_dir)
     if not manifest_path.exists():
         return None
     with open(manifest_path) as f:
-        return json.load(f)
+        return cast(dict[str, object], json.load(f))
 
 
-def _write_manifest(local_dir: Path, manifest: dict) -> None:
+def _write_manifest(local_dir: Path, manifest: dict[str, object]) -> None:
     local_dir.mkdir(parents=True, exist_ok=True)
     with open(_manifest_path(local_dir), "w") as f:
         json.dump(manifest, f, indent=2)
@@ -168,23 +174,26 @@ def _normalize_targets(targets: list[str] | tuple[str, ...] | None) -> list[str]
 
 
 def _download_raw(
-    config: dict,
+    config: DatasetConfig | dict[str, object],
     revision: str,
     *,
     force: bool,
     allow_patterns: list[str] | None,
-) -> dict:
-    local_raw_dir = Path(config["local_raw_dir"])
+) -> dict[str, object]:
+    local_raw_dir: Path = Path(str(config["local_raw_dir"]))
     local_raw_dir.mkdir(parents=True, exist_ok=True)
 
-    existing = _read_existing_manifest(local_raw_dir)
+    existing: dict[str, object] | None = _read_existing_manifest(local_raw_dir)
     if not force and existing is not None and existing.get("revision") == revision:
         logger.info("Raw already at revision %s, skipping download", revision)
         return existing
 
-    patterns = allow_patterns or config.get(
-        "raw_allow_patterns",
-        ["data/*.parquet", "UrbanSound8K.csv"],
+    patterns: list[str] = allow_patterns or cast(
+        list[str],
+        config.get(
+            "raw_allow_patterns",
+            ["data/*.parquet", "UrbanSound8K.csv"],
+        ),
     )
     logger.info(
         "Downloading raw from %s (revision %s) into %s",
@@ -193,16 +202,18 @@ def _download_raw(
         local_raw_dir,
     )
     snapshot_download(
-        repo_id=config["hf_repo_id"],
-        repo_type=config["hf_repo_type"],
+        repo_id=str(config["hf_repo_id"]),
+        repo_type=str(config["hf_repo_type"]),
         revision=revision,
         local_dir=str(local_raw_dir),
         allow_patterns=patterns,
     )
 
     table = ds.dataset(str(local_raw_dir / "data"), format="parquet")
-    stats = validate_schema(table, config)
-    manifest = {
+    stats: SchemaValidationResult = validate_schema(
+        table, cast(DatasetConfig, config)
+    )
+    manifest: dict[str, object] = {
         "target": "raw",
         "hf_repo_id": config["hf_repo_id"],
         "revision": revision,
@@ -215,15 +226,15 @@ def _download_raw(
 
 
 def _download_interim(
-    full_config: dict,
+    full_config: AppConfig,
     revision: str,
     *,
     force: bool,
-) -> dict:
-    dataset_cfg = full_config["dataset"]
-    prep_cfg = full_config["preprocessing"]
-    local_interim_dir = Path(prep_cfg["local_interim_dir"])
-    data_root = local_interim_dir.parent
+) -> dict[str, object]:
+    dataset_cfg: DatasetConfig = full_config["dataset"]
+    prep_cfg: PreprocessingConfig = full_config["preprocessing"]
+    local_interim_dir: Path = Path(prep_cfg["local_interim_dir"])
+    data_root: Path = local_interim_dir.parent
     data_root.mkdir(parents=True, exist_ok=True)
 
     existing = _read_existing_manifest(local_interim_dir)
@@ -231,8 +242,11 @@ def _download_interim(
         logger.info("Interim already at revision %s, skipping download", revision)
         return existing
 
-    patterns = dataset_cfg.get("interim_allow_patterns", ["interim/**"])
-    path_in_repo = full_config.get("versioning", {}).get("path_in_repo", "interim")
+    patterns: list[str] = dataset_cfg.get("interim_allow_patterns", ["interim/**"])
+    versioning: VersioningConfig | dict[str, object] = full_config.get(
+        "versioning", {}
+    )
+    path_in_repo: str = str(versioning.get("path_in_repo", "interim"))
     logger.info(
         "Downloading interim from %s (revision %s) into %s",
         dataset_cfg["hf_repo_id"],
@@ -247,7 +261,7 @@ def _download_interim(
         allow_patterns=patterns,
     )
 
-    metadata_path = local_interim_dir / METADATA_FILENAME
+    metadata_path: Path = local_interim_dir / METADATA_FILENAME
     if not metadata_path.exists():
         raise FileNotFoundError(
             f"interim download finished but {metadata_path} is missing. "
@@ -268,15 +282,15 @@ def _download_interim(
 
 
 def _download_processed(
-    full_config: dict,
+    full_config: AppConfig,
     revision: str,
     *,
     force: bool,
-) -> dict:
-    dataset_cfg = full_config["dataset"]
-    spark_cfg = full_config["spark"]
-    local_processed_dir = Path(spark_cfg["local_processed_dir"])
-    data_root = local_processed_dir.parent
+) -> dict[str, object]:
+    dataset_cfg: DatasetConfig = full_config["dataset"]
+    spark_cfg: SparkConfig = full_config["spark"]
+    local_processed_dir: Path = Path(spark_cfg["local_processed_dir"])
+    data_root: Path = local_processed_dir.parent
     data_root.mkdir(parents=True, exist_ok=True)
 
     existing = _read_existing_manifest(local_processed_dir)
@@ -285,9 +299,8 @@ def _download_processed(
         return existing
 
     patterns = dataset_cfg.get("processed_allow_patterns", ["processed/**"])
-    path_in_repo = full_config.get("versioning", {}).get(
-        "processed_path_in_repo", "processed"
-    )
+    versioning = full_config.get("versioning", {})
+    path_in_repo = str(versioning.get("processed_path_in_repo", "processed"))
     logger.info(
         "Downloading processed from %s (revision %s) into %s",
         dataset_cfg["hf_repo_id"],
@@ -302,9 +315,9 @@ def _download_processed(
         allow_patterns=patterns,
     )
 
-    tabular_path = local_processed_dir / TABULAR_FILENAME
-    mels_path = local_processed_dir / MELS_FILENAME
-    missing = [p.name for p in (tabular_path, mels_path) if not p.exists()]
+    tabular_path: Path = local_processed_dir / TABULAR_FILENAME
+    mels_path: Path = local_processed_dir / MELS_FILENAME
+    missing: list[str] = [p.name for p in (tabular_path, mels_path) if not p.exists()]
     if missing:
         raise FileNotFoundError(
             f"processed download finished but missing {missing} under "
@@ -339,15 +352,15 @@ def download_dataset(
     manifest dict (tests / existing callers). Multi-target returns
     ``{revision, hf_repo_id, raw?, interim?, processed?}``.
     """
-    full_config = load_full_config()
+    full_config: AppConfig = load_full_config()
     if config is not None:
         full_config["dataset"] = cast(
             DatasetConfig, {**full_config["dataset"], **config}
         )
-    dataset_cfg = full_config["dataset"]
-    selected = _normalize_targets(targets)
+    dataset_cfg: DatasetConfig = full_config["dataset"]
+    selected: list[str] = _normalize_targets(targets)
 
-    revision = HfApi().dataset_info(dataset_cfg["hf_repo_id"]).sha
+    revision: str = HfApi().dataset_info(dataset_cfg["hf_repo_id"]).sha
     results: dict[str, object] = {
         "revision": revision,
         "hf_repo_id": dataset_cfg["hf_repo_id"],
@@ -365,7 +378,7 @@ def download_dataset(
         results["processed"] = _download_processed(full_config, revision, force=force)
 
     if selected == ["raw"]:
-        return results["raw"]
+        return cast(dict[str, object], results["raw"])
     return results
 
 

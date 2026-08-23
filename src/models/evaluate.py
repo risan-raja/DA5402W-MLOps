@@ -9,6 +9,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from matplotlib.image import AxesImage
 from sklearn.metrics import (
     accuracy_score,
     confusion_matrix,
@@ -67,9 +70,13 @@ def confusion_matrix_figure(
     class_names: list[str],
     out_path: Path | str | None = None,
 ) -> Path | None:
-    cm = confusion_matrix(y_true, y_pred, labels=list(range(len(class_names))))
+    cm: np.ndarray = confusion_matrix(
+        y_true, y_pred, labels=list(range(len(class_names)))
+    )
+    fig: Figure
+    ax: Axes
     fig, ax = plt.subplots(figsize=(8, 7))
-    im = ax.imshow(cm, interpolation="nearest", cmap="Blues")
+    im: AxesImage = ax.imshow(cm, interpolation="nearest", cmap="Blues")
     fig.colorbar(im, ax=ax)
     ax.set_xticks(range(len(class_names)))
     ax.set_yticks(range(len(class_names)))
@@ -82,8 +89,8 @@ def confusion_matrix_figure(
     if out_path is None:
         plt.close(fig)
         return None
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=120)
+    dest: Path = Path(out_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(dest, dpi=120)
     plt.close(fig)
-    return out_path
+    return dest

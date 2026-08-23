@@ -82,8 +82,8 @@ def _validate_upload(
         raise HTTPException(status_code=400, detail="empty upload")
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="upload exceeds 8 MiB")
-    suffix = Path(filename or "").suffix.lower()
-    mime = (content_type or "").split(";")[0].strip().lower()
+    suffix: str = Path(filename or "").suffix.lower()
+    mime: str = (content_type or "").split(";")[0].strip().lower()
     if suffix not in WAV_SUFFIXES and mime not in WAV_MIMES:
         raise HTTPException(status_code=400, detail="expected a .wav file")
 
@@ -101,31 +101,31 @@ def metrics() -> Response:
 @app.post("/predict", response_model=PredictResponse)
 async def predict(file: Annotated[UploadFile, File()]) -> PredictResponse:
     PREDICT_REQUESTS.inc()
-    started = perf_counter()
-    state = current_state()
-    filename = file.filename
+    started: float = perf_counter()
+    state: ServingState = current_state()
+    filename: str | None = file.filename
     try:
-        data = await file.read()
+        data: bytes = await file.read()
         _validate_upload(filename, file.content_type, data)
         if state.model is None:
             raise HTTPException(
                 status_code=503,
                 detail=state.error or "winning model is not loaded",
             )
-        result = predict_clip(state.model, data, state.config)
-        latency_ms = (perf_counter() - started) * 1000.0
+        result: dict[str, object] = predict_clip(state.model, data, state.config)
+        latency_ms: float = (perf_counter() - started) * 1000.0
         PREDICT_LATENCY.observe(latency_ms / 1000.0)
-        PREDICT_CLASS.labels(class_name=result["label"]).inc()
+        PREDICT_CLASS.labels(class_name=str(result["label"])).inc()
         PREDICT_CONFIDENCE.observe(float(result["confidence"]))
         log_prediction(
-            label=result["label"],
-            confidence=result["confidence"],
-            model_name=result["model_name"],
+            label=str(result["label"]),
+            confidence=float(result["confidence"]),
+            model_name=str(result["model_name"]),
             latency_ms=latency_ms,
             filename=filename,
             status="ok",
         )
-        _observe_drift(state, result["label"], float(result["confidence"]))
+        _observe_drift(state, str(result["label"]), float(result["confidence"]))
         return PredictResponse(latency_ms=round(latency_ms, 3), **result)
     except HTTPException as exc:
         PREDICT_ERRORS.inc()

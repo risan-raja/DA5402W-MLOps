@@ -11,7 +11,7 @@ def test_iter_demo_wavs_reads_class_folders(tmp_path: Path) -> None:
     (tmp_path / "siren").mkdir()
     (tmp_path / "siren" / "b.wav").write_bytes(b"RIFF")
     (tmp_path / "orphan.wav").write_bytes(b"RIFF")
-    pairs = iter_demo_wavs(tmp_path)
+    pairs: list[tuple[str, Path]] = iter_demo_wavs(tmp_path)
     assert [(cls, path.name) for cls, path in pairs] == [
         ("dog_bark", "a.wav"),
         ("siren", "b.wav"),
@@ -19,7 +19,7 @@ def test_iter_demo_wavs_reads_class_folders(tmp_path: Path) -> None:
 
 
 def test_committed_sample_audio_has_three_per_class() -> None:
-    pairs = iter_demo_wavs(SAMPLE_DIR)
+    pairs: list[tuple[str, Path]] = iter_demo_wavs(SAMPLE_DIR)
     by_class: dict[str, int] = {name: 0 for name in CLASS_NAMES}
     for class_name, path in pairs:
         assert path.is_file()

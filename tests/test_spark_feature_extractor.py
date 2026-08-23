@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import soundfile as sf
 
+from src.config_types import AppConfig, SparkConfig
 from src.data_pipeline.audio_features import (
     extract_log_mel,
     extract_tabular_features,
@@ -19,12 +20,14 @@ from src.data_pipeline.spark_feature_extractor import (
 
 
 def _sine(sr: int = 16000, seconds: float = 4.0) -> np.ndarray:
-    t = np.linspace(0, seconds, int(sr * seconds), endpoint=False, dtype=np.float32)
+    t: np.ndarray = np.linspace(
+        0, seconds, int(sr * seconds), endpoint=False, dtype=np.float32
+    )
     return (0.25 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
 
 
 def test_tabular_feature_names_count() -> None:
-    names = tabular_feature_names(n_mfcc=13)
+    names: list[str] = tabular_feature_names(n_mfcc=13)
     # 13*4 mfcc(+delta) + 12*2 chroma + 4*2 spectral/zcr
     assert len(names) == 13 * 4 + 12 * 2 + 4 * 2
     assert "mfcc_delta_0_mean" in names
@@ -32,10 +35,10 @@ def test_tabular_feature_names_count() -> None:
 
 
 def test_pad_or_truncate_and_mel_shape() -> None:
-    short = _sine(seconds=0.5)
-    padded = pad_or_truncate(short, 16000, 4.0)
+    short: np.ndarray = _sine(seconds=0.5)
+    padded: np.ndarray = pad_or_truncate(short, 16000, 4.0)
     assert len(padded) == 64000
-    mel = extract_log_mel(
+    mel: np.ndarray = extract_log_mel(
         padded,
         16000,
         n_mels=128,
@@ -47,17 +50,17 @@ def test_pad_or_truncate_and_mel_shape() -> None:
 
 
 def test_extract_tabular_features_keys() -> None:
-    y = pad_or_truncate(_sine(), 16000, 4.0)
-    feats = extract_tabular_features(y, 16000, n_mfcc=13)
-    names = tabular_feature_names(13)
+    y: np.ndarray = pad_or_truncate(_sine(), 16000, 4.0)
+    feats: dict[str, float] = extract_tabular_features(y, 16000, n_mfcc=13)
+    names: list[str] = tabular_feature_names(13)
     assert set(feats) == set(names)
     assert all(np.isfinite(v) for v in feats.values())
 
 
 def test_extract_clip_features(tmp_path: Path) -> None:
-    wav = tmp_path / "clip.wav"
+    wav: Path = tmp_path / "clip.wav"
     sf.write(wav, _sine(), 16000)
-    spark_cfg = {
+    spark_cfg: SparkConfig | dict[str, object] = {
         "sample_rate": 16000,
         "target_duration_sec": 4.0,
         "n_mfcc": 13,
@@ -66,7 +69,7 @@ def test_extract_clip_features(tmp_path: Path) -> None:
         "hop_length": 512,
         "mel_frames": 126,
     }
-    meta = {
+    meta: dict[str, object] = {
         "path": "audio/fold1/clip.wav",
         "slice_file_name": "clip.wav",
         "fold": 1,
@@ -84,12 +87,12 @@ def test_extract_clip_features(tmp_path: Path) -> None:
 
 
 def _write_mini_interim(interim_dir: Path, n: int = 2) -> None:
-    audio_root = interim_dir / "audio" / "fold1"
+    audio_root: Path = interim_dir / "audio" / "fold1"
     audio_root.mkdir(parents=True)
-    rows = []
+    rows: list[dict[str, object]] = []
     for i in range(n):
-        name = f"clip{i}.wav"
-        rel = Path("audio") / "fold1" / name
+        name: str = f"clip{i}.wav"
+        rel: Path = Path("audio") / "fold1" / name
         sf.write(audio_root / name, _sine(seconds=1.0), 16000)
         rows.append(
             {
@@ -111,10 +114,10 @@ def _write_mini_interim(interim_dir: Path, n: int = 2) -> None:
 
 
 def test_extract_features_spark_end_to_end(tmp_path: Path) -> None:
-    interim_dir = tmp_path / "interim"
-    processed_dir = tmp_path / "processed"
+    interim_dir: Path = tmp_path / "interim"
+    processed_dir: Path = tmp_path / "processed"
     _write_mini_interim(interim_dir, n=2)
-    config = {
+    config: AppConfig | dict[str, object] = {
         "preprocessing": {"local_interim_dir": str(interim_dir)},
         "spark": {
             "local_processed_dir": str(processed_dir),
@@ -134,17 +137,17 @@ def test_extract_features_spark_end_to_end(tmp_path: Path) -> None:
         },
         "versioning": {"processed_path_in_repo": "processed"},
     }
-    manifest = extract_features(config=config, force=True, push=False)
+    manifest: dict[str, object] = extract_features(config=config, force=True, push=False)
     assert manifest["num_written"] == 2
     assert manifest["num_dropped"] == 0
-    tab_path = processed_dir / "tabular.parquet"
-    mels_path = processed_dir / "mels.parquet"
+    tab_path: Path = processed_dir / "tabular.parquet"
+    mels_path: Path = processed_dir / "mels.parquet"
     assert tab_path.is_file()
     assert mels_path.is_file()
     assert not (processed_dir / "_spark_tabular").exists()
     assert not list(processed_dir.glob("**/*.crc"))
-    tab = pd.read_parquet(tab_path)
-    mels = pd.read_parquet(mels_path)
+    tab: pd.DataFrame = pd.read_parquet(tab_path)
+    mels: pd.DataFrame = pd.read_parquet(mels_path)
     assert len(tab) == 2
     assert len(mels) == 2
     assert set(tab["path"]) == set(mels["path"])

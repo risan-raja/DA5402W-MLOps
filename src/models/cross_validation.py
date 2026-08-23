@@ -35,12 +35,12 @@ def aggregate_fold_metrics(fold_metrics: list[FoldMetricRow]) -> dict[str, float
         for row in fold_metrics:
             if key not in row:
                 continue
-            val = float(row[key])
+            val: float = float(row[key])
             if math.isfinite(val):
                 values.append(val)
         if not values:
             continue
-        arr = np.asarray(values, dtype=np.float64)
+        arr: np.ndarray = np.asarray(values, dtype=np.float64)
         aggregate[f"cv_{key}_mean"] = float(np.mean(arr))
         aggregate[f"cv_{key}_std"] = float(np.std(arr, ddof=0))
     return aggregate
@@ -54,15 +54,15 @@ def log_cv_results(
     """Write ``cv_metrics.json``, log aggregate + per-fold F1 to the active MLflow run."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    payload = {"folds": fold_rows, "aggregate": aggregate}
-    path = out_dir / "cv_metrics.json"
+    payload: dict[str, object] = {"folds": fold_rows, "aggregate": aggregate}
+    path: Path = out_dir / "cv_metrics.json"
     save_json(path, payload)
 
     for key, value in aggregate.items():
         if math.isfinite(value):
             mlflow.log_metric(key, value)
     for row in fold_rows:
-        fold = int(row["fold"])
+        fold: int = int(row["fold"])
         f1 = row.get("f1_macro")
         if f1 is not None and math.isfinite(float(f1)):
             mlflow.log_metric(f"fold_{fold}_f1_macro", float(f1))

@@ -6,7 +6,7 @@ import argparse
 import json
 import logging
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import cast
 
@@ -55,24 +55,24 @@ def resolve_reference_path(
 ) -> Path:
     if explicit is not None:
         return explicit
-    dcfg = _drift_cfg(config)
-    raw = Path(dcfg.get("reference_path", "models/drift_reference.json"))
+    dcfg: DriftMonitoringConfig | dict[str, object] = _drift_cfg(config)
+    raw: Path = Path(dcfg.get("reference_path", "models/drift_reference.json"))
     if raw.is_absolute():
         return raw
     if models_root is not None:
-        named = models_root / raw.name
+        named: Path = models_root / raw.name
         if named.is_file() or models_root.exists():
             return named
     return ROOT / raw
 
 
 def _processed_dir(config: AppConfig) -> Path:
-    path = Path(config.get("spark", {}).get("local_processed_dir", "data/processed"))
+    path: Path = Path(config.get("spark", {}).get("local_processed_dir", "data/processed"))
     return path if path.is_absolute() else ROOT / path
 
 
 def _interim_dir(config: AppConfig) -> Path:
-    path = Path(
+    path: Path = Path(
         config.get("preprocessing", {}).get("local_interim_dir", "data/interim")
     )
     return path if path.is_absolute() else ROOT / path
@@ -85,20 +85,20 @@ def _eval_fold(config: AppConfig) -> int:
 def _fold_labels(frame: pd.DataFrame, fold: int) -> pd.DataFrame:
     if "fold" not in frame.columns or "class" not in frame.columns:
         raise ValueError("expected fold and class columns")
-    subset = frame.loc[frame["fold"].astype(int) == fold]
+    subset: pd.DataFrame = frame.loc[frame["fold"].astype(int) == fold]
     if "is_augmented" in subset.columns:
         subset = subset.loc[~subset["is_augmented"].astype(bool)]
     return subset.reset_index(drop=True)
 
 
 def _load_fold10_frame(config: AppConfig) -> tuple[pd.DataFrame | None, str]:
-    fold = _eval_fold(config)
-    processed = _processed_dir(config) / TABULAR_FILENAME
+    fold: int = _eval_fold(config)
+    processed: Path = _processed_dir(config) / TABULAR_FILENAME
     if processed.is_file():
-        frame = _fold_labels(pd.read_parquet(processed), fold)
+        frame: pd.DataFrame = _fold_labels(pd.read_parquet(processed), fold)
         if not frame.empty:
             return frame, "processed_tabular"
-    interim = _interim_dir(config) / METADATA_FILENAME
+    interim: Path = _interim_dir(config) / METADATA_FILENAME
     if interim.is_file():
         frame = _fold_labels(pd.read_parquet(interim), fold)
         if not frame.empty:
@@ -107,17 +107,17 @@ def _load_fold10_frame(config: AppConfig) -> tuple[pd.DataFrame | None, str]:
 
 
 def _winner_meta(config: AppConfig) -> dict[str, object]:
-    models_dir = Path(config.get("training", {}).get("models_dir", "models"))
+    models_dir: Path = Path(config.get("training", {}).get("models_dir", "models"))
     if not models_dir.is_absolute():
         models_dir = ROOT / models_dir
-    payload_path = models_dir / "winner.json"
+    payload_path: Path = models_dir / "winner.json"
     if not payload_path.is_file():
         return {}
     with open(payload_path) as handle:
-        payload = json.load(handle)
+        payload: object = json.load(handle)
     if not isinstance(payload, dict):
         return {}
-    dataset = cast(dict[str, object], payload.get("dataset") or {})
+    dataset: dict[str, object] = cast(dict[str, object], payload.get("dataset") or {})
     return {
         "dataset_id": dataset.get("hf_repo_id")
         or config.get("dataset", {}).get("hf_repo_id"),
@@ -128,7 +128,7 @@ def _winner_meta(config: AppConfig) -> dict[str, object]:
 
 
 def _feature_columns(frame: pd.DataFrame, n_mfcc: int) -> list[str]:
-    expected = tabular_feature_names(n_mfcc=n_mfcc)
+    expected: list[str] = tabular_feature_names(n_mfcc=n_mfcc)
     return [name for name in expected if name in frame.columns]
 
 
@@ -136,7 +136,9 @@ def _stored_confidences(frame: pd.DataFrame) -> list[float]:
     for column in ("confidence", "max_proba"):
         if column not in frame.columns:
             continue
-        values = [float(v) for v in frame[column].tolist() if pd.notna(v)]
+        values: list[float] = [
+            float(v) for v in frame[column].tolist() if pd.notna(v)
+        ]
         if values:
             return values
     return []
@@ -160,11 +162,13 @@ def build_reference(
     confidence_path: Path | None = None,
     n_bins: int | None = None,
 ) -> DriftReference:
-    extra = _winner_meta(config)
+    extra: dict[str, object] = _winner_meta(config)
     extra["dataset_id"] = extra.get("dataset_id") or config.get("dataset", {}).get(
         "hf_repo_id"
     )
     extra["eval_fold"] = _eval_fold(config)
+    frame: pd.DataFrame | None
+    source: str
     frame, source = _load_fold10_frame(config)
     if frame is None:
         warnings.warn(
@@ -172,7 +176,7 @@ def build_reference(
             "using official UrbanSound8K fold-10 class counts",
             stacklevel=2,
         )
-        reference = official_fold10_reference(extra_meta=extra)
+        reference: DriftReference = official_fold10_reference(extra_meta=extra)
     else:
         extra["source"] = source
         extra["n_rows"] = len(frame)
@@ -180,7 +184,7 @@ def build_reference(
             frame["class"].astype(str).tolist(), extra_meta=extra
         )
     if confidence_path is not None:
-        samples = _read_confidence_file(confidence_path)
+        samples: list[float] = _read_confidence_file(confidence_path)
         if samples:
             reference = with_confidence_samples(reference, samples)
         else:
@@ -204,8 +208,8 @@ def build_reference(
             raise FileNotFoundError(
                 "build-reference --with-features needs data/processed/tabular.parquet"
             )
-        n_mfcc = int(config.get("spark", {}).get("n_mfcc", 13))
-        cols = _feature_columns(frame, n_mfcc)
+        n_mfcc: int = int(config.get("spark", {}).get("n_mfcc", 13))
+        cols: list[str] = _feature_columns(frame, n_mfcc)
         if not cols:
             raise ValueError("processed fold-10 frame has no tabular feature columns")
         histograms = build_feature_histograms(
@@ -224,7 +228,7 @@ def _iter_prediction_records(path: Path) -> Iterator[tuple[str, float]]:
             if not line:
                 continue
             try:
-                record = json.loads(line)
+                record: object = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise ValueError(f"{path}:{line_no} is not JSON") from exc
             if not isinstance(record, dict):
@@ -240,6 +244,7 @@ def _iter_prediction_records(path: Path) -> Iterator[tuple[str, float]]:
 
 
 def fold10_prediction_labels(config: AppConfig) -> list[str]:
+    frame: pd.DataFrame | None
     frame, _source = _load_fold10_frame(config)
     if frame is not None:
         return frame["class"].astype(str).tolist()
@@ -251,7 +256,7 @@ def fold10_prediction_labels(config: AppConfig) -> list[str]:
 
 def write_fold10_prediction_log(path: Path, config: AppConfig) -> int:
     """Write a synthetic JSONL of fold-10 labels so score-predictions can run."""
-    labels = fold10_prediction_labels(config)
+    labels: list[str] = fold10_prediction_labels(config)
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = (
         json.dumps(
@@ -273,7 +278,7 @@ def write_fold10_prediction_log(path: Path, config: AppConfig) -> int:
 def ensure_prediction_jsonl(path: Path, config: AppConfig) -> Path:
     if path.is_file():
         return path
-    n_rows = write_fold10_prediction_log(path, config)
+    n_rows: int = write_fold10_prediction_log(path, config)
     warnings.warn(
         f"{path} was missing; wrote {n_rows} fold-10 labels as a demo prediction log",
         stacklevel=2,
@@ -281,7 +286,7 @@ def ensure_prediction_jsonl(path: Path, config: AppConfig) -> Path:
     return path
 
 
-def score_prediction_file(path: Path, reference: DriftReference) -> dict:
+def score_prediction_file(path: Path, reference: DriftReference) -> dict[str, object]:
     labels: list[str] = []
     confidences: list[float] = []
     for label, confidence in _iter_prediction_records(path):
@@ -295,17 +300,19 @@ def score_prediction_file(path: Path, reference: DriftReference) -> dict:
     }
 
 
-def score_feature_file(path: Path, reference: DriftReference, n_mfcc: int) -> dict:
+def score_feature_file(
+    path: Path, reference: DriftReference, n_mfcc: int
+) -> dict[str, float | str]:
     if not reference.has_features:
         raise ValueError(
             "reference has no feature_histograms; rebuild with --with-features"
         )
-    frame = pd.read_parquet(path)
+    frame: pd.DataFrame = pd.read_parquet(path)
     if "is_augmented" in frame.columns:
-        originals = frame.loc[~frame["is_augmented"].astype(bool)]
+        originals: pd.DataFrame = frame.loc[~frame["is_augmented"].astype(bool)]
         if not originals.empty:
             frame = originals
-    cols = [
+    cols: list[str] = [
         name
         for name in tabular_feature_names(n_mfcc=n_mfcc)
         if name in frame.columns and name in reference.feature_histograms
@@ -316,12 +323,12 @@ def score_feature_file(path: Path, reference: DriftReference, n_mfcc: int) -> di
     )
 
 
-def _print_json(payload: dict[str, object]) -> None:
-    print(json.dumps(payload, indent=2))
+def _print_json(payload: Mapping[str, object]) -> None:
+    print(json.dumps(dict(payload), indent=2))
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
         description="Build or score KS/PSI drift references."
     )
     parser.add_argument(
@@ -367,28 +374,28 @@ def main(argv: list[str] | None = None) -> int:
         help="Build fold-10 feature histograms into the reference if they are missing",
     )
 
-    args = parser.parse_args(argv)
-    config = _load_config(args.config)
+    args: argparse.Namespace = parser.parse_args(argv)
+    config: AppConfig = _load_config(args.config)
     if args.command == "build-reference":
-        reference = build_reference(
+        reference: DriftReference = build_reference(
             config,
             with_features=args.with_features,
             confidence_path=args.confidences,
         )
-        dest = resolve_reference_path(config, explicit=args.output)
+        dest: Path = resolve_reference_path(config, explicit=args.output)
         dump_reference(dest, reference)
         _print_json({"wrote": str(dest), "meta": reference.meta})
         return 0
-    reference_path = resolve_reference_path(config, explicit=args.reference)
+    reference_path: Path = resolve_reference_path(config, explicit=args.reference)
     reference = load_reference(reference_path)
     if args.command == "score-predictions":
-        jsonl = ensure_prediction_jsonl(args.jsonl, config)
+        jsonl: Path = ensure_prediction_jsonl(args.jsonl, config)
         _print_json(score_prediction_file(jsonl, reference))
         return 0
     if args.with_features and not reference.has_features:
         reference = build_reference(config, with_features=True)
         dump_reference(reference_path, reference)
-    n_mfcc = int(config.get("spark", {}).get("n_mfcc", 13))
+    n_mfcc: int = int(config.get("spark", {}).get("n_mfcc", 13))
     _print_json(score_feature_file(args.parquet, reference, n_mfcc))
     return 0
 

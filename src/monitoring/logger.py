@@ -18,7 +18,7 @@ def log_prediction(
     filename: str | None = None,
     status: str = "ok",
 ) -> None:
-    record = {
+    record: dict[str, object] = {
         "event": "prediction",
         "ts": datetime.now(UTC).isoformat(),
         "status": status,

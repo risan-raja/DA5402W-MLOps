@@ -55,8 +55,8 @@ def _fingerprint(path: Path) -> FileFingerprint:
         return {"path": str(path), "exists": False}
     st = path.stat()
     h = hashlib.sha256()
-    size = st.st_size
-    chunk = 1024 * 1024
+    size: int = st.st_size
+    chunk: int = 1024 * 1024
     with open(path, "rb") as f:
         h.update(f.read(chunk))
         if size > chunk * 2:
@@ -79,20 +79,26 @@ def collect_dataset_lineage(
     full_config: AppConfig | None = None,
 ) -> DatasetLineage:
     """Provenance for MLflow: HF repo + interim/processed manifests + file fingerprints."""
-    processed_dir = Path(processed_dir)
-    cfg = full_config if full_config is not None else load_full_config()
+    processed_path: Path = Path(processed_dir)
+    cfg: AppConfig = full_config if full_config is not None else load_full_config()
     dataset_cfg = cfg["dataset"]
 
-    interim_dir = Path(cfg["preprocessing"]["local_interim_dir"])
+    interim_dir: Path = Path(cfg["preprocessing"]["local_interim_dir"])
     if not interim_dir.is_absolute():
         interim_dir = ROOT / interim_dir
-    raw_dir = Path(dataset_cfg["local_raw_dir"])
+    raw_dir: Path = Path(dataset_cfg["local_raw_dir"])
     if not raw_dir.is_absolute():
         raw_dir = ROOT / raw_dir
 
-    processed_manifest = _read_json_if_exists(processed_dir / ".manifest.json") or {}
-    interim_manifest = _read_json_if_exists(interim_dir / ".manifest.json") or {}
-    raw_manifest = _read_json_if_exists(raw_dir / ".manifest.json") or {}
+    processed_manifest: dict[str, object] = (
+        _read_json_if_exists(processed_path / ".manifest.json") or {}
+    )
+    interim_manifest: dict[str, object] = (
+        _read_json_if_exists(interim_dir / ".manifest.json") or {}
+    )
+    raw_manifest: dict[str, object] = (
+        _read_json_if_exists(raw_dir / ".manifest.json") or {}
+    )
 
     return {
         "hf_repo_id": dataset_cfg.get("hf_repo_id"),
@@ -106,8 +112,8 @@ def collect_dataset_lineage(
         "processed_num_input_rows": cast(
             int | None, processed_manifest.get("num_input_rows")
         ),
-        "tabular": _fingerprint(processed_dir / TABULAR_FILENAME),
-        "mels": _fingerprint(processed_dir / MELS_FILENAME),
+        "tabular": _fingerprint(processed_path / TABULAR_FILENAME),
+        "mels": _fingerprint(processed_path / MELS_FILENAME),
         "processed_manifest": processed_manifest,
         "interim_manifest": interim_manifest,
         "raw_manifest": raw_manifest,
@@ -128,17 +134,17 @@ def filter_split(
 
 
 def feature_columns(frame: pd.DataFrame, n_mfcc: int = 13) -> list[str]:
-    expected = tabular_feature_names(n_mfcc=n_mfcc)
-    missing = [c for c in expected if c not in frame.columns]
+    expected: list[str] = tabular_feature_names(n_mfcc=n_mfcc)
+    missing: list[str] = [c for c in expected if c not in frame.columns]
     if missing:
         raise ValueError(f"tabular frame missing feature columns: {missing[:5]}...")
     return expected
 
 
 def build_label_maps(labels: pd.Series) -> tuple[dict[str, int], dict[int, str]]:
-    classes = sorted(labels.astype(str).unique())
-    label_to_id = {c: i for i, c in enumerate(classes)}
-    id_to_label = {i: c for c, i in label_to_id.items()}
+    classes: list[str] = sorted(labels.astype(str).unique())
+    label_to_id: dict[str, int] = {c: i for i, c in enumerate(classes)}
+    id_to_label: dict[int, str] = {i: c for c, i in label_to_id.items()}
     return label_to_id, id_to_label
 
 
@@ -151,9 +157,9 @@ def class_weight_vector(
     n_classes: int,
 ) -> np.ndarray:
     """Inverse-frequency weights shaped ``(n_classes,)`` for CE / sample weights."""
-    counts = np.bincount(y, minlength=n_classes).astype(np.float64)
+    counts: np.ndarray = np.bincount(y, minlength=n_classes).astype(np.float64)
     counts = np.maximum(counts, 1.0)
-    weights = counts.sum() / (n_classes * counts)
+    weights: np.ndarray = counts.sum() / (n_classes * counts)
     return weights.astype(np.float64)
 
 
@@ -162,14 +168,14 @@ def sample_weights_from_y(y: np.ndarray, class_weights: np.ndarray) -> np.ndarra
 
 
 def load_tabular(processed_dir: Path | str) -> pd.DataFrame:
-    path = Path(processed_dir) / TABULAR_FILENAME
+    path: Path = Path(processed_dir) / TABULAR_FILENAME
     if not path.exists():
         raise FileNotFoundError(path)
     return pd.read_parquet(path)
 
 
 def load_mels(processed_dir: Path | str) -> pd.DataFrame:
-    path = Path(processed_dir) / MELS_FILENAME
+    path: Path = Path(processed_dir) / MELS_FILENAME
     if not path.exists():
         raise FileNotFoundError(path)
     return pd.read_parquet(path)
@@ -181,13 +187,13 @@ def tabular_xy(
     label_to_id: dict[str, int],
     label_column: str = "class",
 ) -> tuple[np.ndarray, np.ndarray]:
-    x = frame[feature_cols].to_numpy(dtype=np.float32)
-    y = encode_labels(frame[label_column], label_to_id)
+    x: np.ndarray = frame[feature_cols].to_numpy(dtype=np.float32)
+    y: np.ndarray = encode_labels(frame[label_column], label_to_id)
     return x, y
 
 
 def fit_scaler(x_train: np.ndarray) -> StandardScaler:
-    scaler = StandardScaler()
+    scaler: StandardScaler = StandardScaler()
     scaler.fit(x_train)
     return scaler
 
@@ -197,16 +203,16 @@ def transform_features(scaler: StandardScaler, x: np.ndarray) -> np.ndarray:
 
 
 def reshape_mel_row(row: pd.Series) -> np.ndarray:
-    h = int(row["mel_height"])
-    w = int(row["mel_width"])
-    mel = np.asarray(row["mel"], dtype=np.float32).reshape(h, w)
+    h: int = int(row["mel_height"])
+    w: int = int(row["mel_width"])
+    mel: np.ndarray = np.asarray(row["mel"], dtype=np.float32).reshape(h, w)
     return mel
 
 
 def mels_array(frame: pd.DataFrame) -> np.ndarray:
     if frame.empty:
         return np.empty((0, 0, 0), dtype=np.float32)
-    arrays = [reshape_mel_row(row) for _, row in frame.iterrows()]
+    arrays: list[np.ndarray] = [reshape_mel_row(row) for _, row in frame.iterrows()]
     return np.stack(arrays, axis=0)
 
 
@@ -230,10 +236,12 @@ def split_frames(
     eval_fold: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Return optuna_train (1-8+aug), val (9 orig), refit (1-9+aug), eval (10 orig)."""
-    optuna_train = filter_split(frame, train_folds, include_augmented=True)
-    val = filter_split(frame, [val_fold], include_augmented=False)
-    refit = filter_split(frame, [*train_folds, val_fold], include_augmented=True)
-    eval_df = filter_split(frame, [eval_fold], include_augmented=False)
+    optuna_train: pd.DataFrame = filter_split(frame, train_folds, include_augmented=True)
+    val: pd.DataFrame = filter_split(frame, [val_fold], include_augmented=False)
+    refit: pd.DataFrame = filter_split(
+        frame, [*train_folds, val_fold], include_augmented=True
+    )
+    eval_df: pd.DataFrame = filter_split(frame, [eval_fold], include_augmented=False)
     return optuna_train, val, refit, eval_df
 
 
@@ -244,7 +252,7 @@ def iter_us8k_cv_folds(n_folds: int = 10) -> Iterator[tuple[int, list[int]]]:
     """
     if n_folds < 2:
         raise ValueError(f"n_folds must be >= 2, got {n_folds}")
-    folds = list(range(1, n_folds + 1))
+    folds: list[int] = list(range(1, n_folds + 1))
     for test_fold in folds:
-        train_folds = [f for f in folds if f != test_fold]
+        train_folds: list[int] = [f for f in folds if f != test_fold]
         yield test_fold, train_folds

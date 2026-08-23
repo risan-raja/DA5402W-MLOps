@@ -37,7 +37,7 @@ def build_augmentations(
 
 
 def _clip_seed(base_seed: int, key: str, copy_index: int) -> int:
-    digest = hashlib.sha256(f"{base_seed}:{key}:{copy_index}".encode()).hexdigest()
+    digest: str = hashlib.sha256(f"{base_seed}:{key}:{copy_index}".encode()).hexdigest()
     return int(digest[:8], 16)
 
 
@@ -51,9 +51,11 @@ def augment_waveform(
     augmentations: Compose | None = None,
 ) -> np.ndarray:
     """Return one augmented copy. RNG seed is derived from base_seed + key + copy_index."""
-    seed = _clip_seed(base_seed, key, copy_index)
+    seed: int = _clip_seed(base_seed, key, copy_index)
     random.seed(seed)
     np.random.seed(seed)
-    pipeline = augmentations or build_augmentations()
-    out = pipeline(samples=y.astype(np.float32, copy=False), sample_rate=sample_rate)
+    pipeline: Compose = augmentations or build_augmentations()
+    out: np.ndarray = pipeline(
+        samples=y.astype(np.float32, copy=False), sample_rate=sample_rate
+    )
     return np.asarray(out, dtype=np.float32)
