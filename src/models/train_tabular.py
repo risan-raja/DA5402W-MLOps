@@ -100,7 +100,7 @@ def train_tabular_model(
         mlflow.log_param("model_name", model_name)
         mlflow.log_param("n_trials", n_trials)
         mlflow.set_tag("model_family", "tabular")
-        ml_dataset = log_dataset_lineage(lineage)
+        ml_dataset = log_dataset_lineage(lineage, model_name=model_name)
 
         study = optuna.create_study(
             direction="maximize",

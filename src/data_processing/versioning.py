@@ -47,6 +47,18 @@ def versioning_push_enabled(key: str, config_path: Path = CONFIG_PATH) -> bool:
     return bool(load_versioning_config(config_path).get(key, False))
 
 
+def config_enabled(
+    section: str,
+    key: str = "enabled",
+    *,
+    default: bool = True,
+    config_path: Path = CONFIG_PATH,
+) -> bool:
+    """Return a boolean flag from any config section (missing key uses ``default``)."""
+    cfg = load_full_config(config_path).get(section) or {}
+    return bool(cfg.get(key, default))
+
+
 def resolve_model_repo_id(config_path: Path = CONFIG_PATH) -> tuple[str, str]:
     """Return (repo_id, repo_type) for the trained-model Hub repo."""
     vcfg = load_versioning_config(config_path)

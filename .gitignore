@@ -82,7 +82,8 @@ mlartifacts/
 .dvc/cache
 .dvc/tmp
 
-# Airflow — local runtime state (standalone mode or docker-mounted volumes)
+# Airflow — local runtime state (host LocalExecutor home)
+.airflow/
 airflow/logs/
 airflow/airflow.db
 airflow/airflow-webserver.pid

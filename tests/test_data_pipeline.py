@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pyarrow as pa
 import pyarrow.dataset as ds
 import pytest
@@ -11,6 +13,7 @@ from src.data_pipeline.dataset_downloader import (
 )
 from src.data_processing.versioning import (
     TRAINED_MODEL_DIRS,
+    config_enabled,
     push_all_trained_models,
     push_winner_artifacts,
     resolve_model_repo_id,
@@ -111,6 +114,14 @@ def test_versioning_push_enabled(tmp_path):
     assert versioning_push_enabled("missing_key", config_path=cfg) is False
 
 
+def test_config_enabled_section_flags(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("preprocessing:\n  enabled: false\nspark:\n  enabled: true\n")
+    assert config_enabled("preprocessing", config_path=cfg) is False
+    assert config_enabled("spark", config_path=cfg) is True
+    assert config_enabled("missing_section", config_path=cfg) is True
+
+
 def test_resolve_model_repo_id(tmp_path):
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
@@ -122,7 +133,9 @@ def test_resolve_model_repo_id(tmp_path):
 
 def test_resolve_model_repo_id_requires_id(tmp_path):
     cfg = tmp_path / "config.yaml"
-    cfg.write_text("dataset:\n  hf_repo_id: example/ds\nversioning:\n  path_in_repo: interim\n")
+    cfg.write_text(
+        "dataset:\n  hf_repo_id: example/ds\nversioning:\n  path_in_repo: interim\n"
+    )
     with pytest.raises(ValueError, match="hf_model_repo_id"):
         resolve_model_repo_id(config_path=cfg)
 
@@ -156,11 +169,21 @@ def test_push_all_trained_models_uploads_each_dir(tmp_path, monkeypatch):
         uploaded.append(path_in_repo)
         return "ok"
 
-    monkeypatch.setattr(
-        "src.data_processing.versioning.push_model_tree", _fake_push
-    )
+    monkeypatch.setattr("src.data_processing.versioning.push_model_tree", _fake_push)
     push_all_trained_models(models_dir, config_path=cfg)
     assert uploaded == list(TRAINED_MODEL_DIRS)
+
+
+def test_dag_project_root_is_repo_root():
+    dag_file = (
+        Path(__file__).resolve().parents[1]
+        / "airflow"
+        / "dags"
+        / "audio_classification_dag.py"
+    )
+    project_root = dag_file.parents[2]
+    assert (project_root / "src" / "models" / "train.py").is_file()
+    assert (project_root / "config" / "config.yaml").is_file()
 
 
 @pytest.mark.integration

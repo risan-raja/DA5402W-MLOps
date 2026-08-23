@@ -175,6 +175,40 @@ def test_load_runtime_env_sets_thread_defaults(tmp_path, monkeypatch):
         assert os.environ.get(key) == value
 
 
+def test_register_dataset_input_retries_unique_then_succeeds(monkeypatch):
+    from mlflow.exceptions import MlflowException
+
+    from src.models.mlflow_logging import register_dataset_input
+
+    calls = {"n": 0}
+
+    def _log_input(*_args, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise MlflowException(
+                "UNIQUE constraint failed: datasets.experiment_id, "
+                "datasets.name, datasets.digest"
+            )
+
+    monkeypatch.setattr("src.models.mlflow_logging.mlflow.log_input", _log_input)
+    monkeypatch.setattr("src.models.mlflow_logging.time.sleep", lambda *_: None)
+    register_dataset_input(object())
+    assert calls["n"] == 3
+
+
+def test_register_dataset_input_continues_after_persistent_unique(monkeypatch):
+    from mlflow.exceptions import MlflowException
+
+    from src.models.mlflow_logging import register_dataset_input
+
+    def _log_input(*_args, **_kwargs):
+        raise MlflowException("UNIQUE constraint failed: datasets.digest")
+
+    monkeypatch.setattr("src.models.mlflow_logging.mlflow.log_input", _log_input)
+    monkeypatch.setattr("src.models.mlflow_logging.time.sleep", lambda *_: None)
+    register_dataset_input(object(), attempts=2)
+
+
 def test_run_training_import_and_all_models():
     assert "rf" in ALL_MODELS
     assert "resnet18" in ALL_MODELS

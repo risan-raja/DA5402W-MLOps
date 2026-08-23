@@ -130,7 +130,7 @@ def train_resnet_model(
         mlflow.log_param("model_name", "resnet18")
         mlflow.log_param("n_trials", n_trials)
         mlflow.set_tag("model_family", "cnn")
-        ml_dataset = log_dataset_lineage(lineage)
+        ml_dataset = log_dataset_lineage(lineage, model_name="resnet18")
 
         # Prefetch weights once (avoids SSL failures / re-downloads inside Optuna trials).
         ensure_resnet18_weights()

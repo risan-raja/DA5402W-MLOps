@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import tempfile
+import time
 from pathlib import Path
 
 import mlflow.lightgbm
@@ -18,6 +19,7 @@ import optuna
 import pandas as pd
 from mlflow.data.http_dataset_source import HTTPDatasetSource
 from mlflow.data.meta_dataset import MetaDataset
+from mlflow.exceptions import MlflowException
 from mlflow.tracking import MlflowClient
 
 import mlflow
@@ -50,7 +52,7 @@ def jsonable_params(params: dict) -> dict:
     return out
 
 
-def log_dataset_lineage(lineage: dict) -> MetaDataset:
+def log_dataset_lineage(lineage: dict, *, model_name: str | None = None) -> MetaDataset:
     """Attach dataset provenance and register an MLflow Dataset input.
 
     Returns the MetaDataset so metrics can be logged with ``dataset=...``
@@ -119,13 +121,40 @@ def log_dataset_lineage(lineage: dict) -> MetaDataset:
     # MLflow rejects digests longer than 36 chars.
     digest = (tab.get("sha256") or mel.get("sha256") or "unknown")[:36]
     source_url = f"https://huggingface.co/datasets/{repo}"
+    dataset_name = "urbansound8k-processed"
+    if model_name:
+        dataset_name = f"{dataset_name}-{model_name}"
     dataset = MetaDataset(
         source=HTTPDatasetSource(source_url),
-        name="urbansound8k-processed",
+        name=dataset_name,
         digest=digest,
     )
-    mlflow.log_input(dataset, context="training")
+    register_dataset_input(dataset)
     return dataset
+
+
+def register_dataset_input(dataset: MetaDataset, *, attempts: int = 5) -> None:
+    """Attach ``dataset`` to the active run.
+
+    Parallel train tasks share one experiment and the same processed digest, so
+    MLflow's datasets UNIQUE(experiment_id, name, digest) can race. Retry, then
+    continue — params/tags/artifacts already carry lineage.
+    """
+    last_exc: MlflowException | None = None
+    for attempt in range(attempts):
+        try:
+            mlflow.log_input(dataset, context="training")
+            return
+        except MlflowException as exc:
+            text = str(exc)
+            if "UNIQUE constraint failed" not in text:
+                raise
+            last_exc = exc
+            time.sleep(0.2 * (attempt + 1))
+    logger.warning(
+        "MLflow dataset already registered for this experiment; continuing: %s",
+        last_exc,
+    )
 
 
 def log_metrics(

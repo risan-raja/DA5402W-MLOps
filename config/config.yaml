@@ -15,6 +15,8 @@ dataset:
     - "interim/**"
 
 preprocessing:
+  # When false, the DAG preprocess_interim task is a no-op (reuse data/interim).
+  enabled: false
   local_interim_dir: data/interim
   target_sample_rate: 16000
   eval_fold: 10
@@ -24,6 +26,8 @@ preprocessing:
   seed: 42
 
 spark:
+  # When false, the DAG spark_feature_extraction task is a no-op (reuse data/processed).
+  enabled: false
   local_processed_dir: data/processed
   # Keep heap small; throughput comes from batching, not a huge driver.
   driver_memory: "1g"
