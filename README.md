@@ -13,7 +13,7 @@ UrbanSound8K has 8,732 labeled clips across 10 classes: air conditioners, car ho
 3. Trains and compares four models (XGBoost, LightGBM, Random Forest on the tabular features, and a CNN on mel-spectrograms), tuning each with Optuna and logging each run to MLflow.
 4. Serves the winning model through FastAPI, containerized with Docker.
 5. Runs ingestion through training as one Airflow DAG.
-6. Monitors the live API with Prometheus metrics and a KS-test drift detector on incoming predictions.
+6. Monitors the live API with Prometheus, Grafana, JSON prediction logs, and a KS/PSI drift detector on incoming predictions.
 
 ## System architecture
 
@@ -124,15 +124,26 @@ curl -X POST http://localhost:8000/predict \
 
 # send 3 clips × 10 classes so Prometheus/Grafana record request rate + latency
 make demo-predict
+# fill the 100-prediction drift window, then scrape Grafana
+python -m src.deployment.demo --repeat 4
 # slower pass (15s scrape): python -m src.deployment.demo --repeat 2 --delay 1
 
-# Prometheus scrape target
+# Prometheus scrape target (includes drift_psi_class / drift_ks_confidence)
 curl http://localhost:8000/metrics
+
+# rebuild the fold-10 reference (adds feature histograms when processed/ exists)
+make drift-reference
+# score a prediction JSONL; writes predictions.jsonl from fold-10 labels if missing
+make drift-score
+# tabular feature PSI/KS (builds histograms into the reference if needed)
+python -m src.monitoring.drift_cli score-features data/processed/tabular.parquet --with-features
 ```
 
 `/predict` accepts a `.wav` file and returns the predicted class, confidence, `model_name`, `latency_ms`, and the 10-class `probabilities` map. Malformed, oversized, or non-`.wav` uploads return a structured error. If no winner is loaded, `/predict` returns 503 while `/health` stays 200.
 
-Grafana is at [http://localhost:3000](http://localhost:3000). Sign in with `GF_SECURITY_ADMIN_USER` / `GF_SECURITY_ADMIN_PASSWORD` from `.env` (defaults: `admin` / `admin`). Open the provisioned **API Overview** dashboard.
+The live drift monitor compares a rolling window of 100 predicted labels (PSI) and confidences (KS) to `models/drift_reference.json` (fold-10 class prior; optional confidence quantiles). Gauges stay unset until the window is full. Tabular feature PSI is offline-only: CNN serving does not extract the 84-D vector.
+
+Grafana is at [http://localhost:3000](http://localhost:3000). Sign in with `GF_SECURITY_ADMIN_USER` / `GF_SECURITY_ADMIN_PASSWORD` from `.env` (defaults: `admin` / `admin`). Open the provisioned **API Overview** dashboard (request/latency panels plus class-mix PSI and confidence KS).
 
 ## Docker execution
 
@@ -157,7 +168,7 @@ Service ports: API on `8000`, MLflow UI on `5001`, host Airflow UI on `8080`, Pr
 ```
 DA5402W/
 ├── airflow/            # DAG only (host Airflow; PROJECT_ROOT = repo root)
-├── Makefile            # make airflow / make compose
+├── Makefile            # make airflow / make compose / make drift-reference
 ├── config/             # config.yaml, logging.yaml
 ├── data/                # raw/ (upstream cache), interim/ (versioned), processed/, sample_audio/
 ├── docker/             # Dockerfile.api, docker-compose.yml, prometheus/

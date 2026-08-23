@@ -16,6 +16,7 @@ from huggingface_hub import snapshot_download
 
 from src.models.cnn_model import build_resnet18
 from src.models.runtime_env import ROOT
+from src.monitoring.drift_detector import DriftMonitor, load_reference
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class ServingState:
     config: dict
     models_dir: Path
     error: str | None = None
+    drift_monitor: DriftMonitor | None = None
 
 
 def config_path() -> Path:
@@ -229,6 +231,46 @@ def resolve_artifact_dir(
     )
 
 
+def drift_enabled(config: dict) -> bool:
+    dcfg = (config.get("monitoring") or {}).get("drift") or {}
+    return bool(dcfg.get("enabled", True))
+
+
+def drift_window_size(config: dict) -> int:
+    raw = os.environ.get("DA5402W_DRIFT_WINDOW")
+    if raw:
+        return max(1, int(raw))
+    dcfg = (config.get("monitoring") or {}).get("drift") or {}
+    return max(1, int(dcfg.get("window_size", 100)))
+
+
+def resolve_drift_reference_path(config: dict, models_root: Path) -> Path:
+    dcfg = (config.get("monitoring") or {}).get("drift") or {}
+    raw = Path(dcfg.get("reference_path", "models/drift_reference.json"))
+    if raw.is_absolute():
+        return raw
+    candidates = (models_root / raw.name, models_root / raw, ROOT / raw)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return models_root / raw.name
+
+
+def load_drift_monitor(config: dict, models_root: Path) -> DriftMonitor | None:
+    if not drift_enabled(config):
+        return None
+    path = resolve_drift_reference_path(config, models_root)
+    if not path.is_file():
+        logger.warning("drift reference missing at %s; drift gauges disabled", path)
+        return None
+    try:
+        reference = load_reference(path)
+    except (OSError, TypeError, ValueError, KeyError) as exc:
+        logger.warning("failed to load drift reference %s: %s", path, exc)
+        return None
+    return DriftMonitor(drift_window_size(config), reference)
+
+
 def load_serving_state(
     *,
     config: dict | None = None,
@@ -257,9 +299,18 @@ def load_serving_state(
         logger.info(
             "Loaded %s (%s) from %s", loaded.model_name, loaded.family, artifact_dir
         )
-        return ServingState(model=loaded, config=cfg, models_dir=models_root)
+        return ServingState(
+            model=loaded,
+            config=cfg,
+            models_dir=models_root,
+            drift_monitor=load_drift_monitor(cfg, models_root),
+        )
     except Exception as exc:
         logger.exception("Winner model not loaded")
         return ServingState(
-            model=None, config=cfg, models_dir=models_root, error=str(exc)
+            model=None,
+            config=cfg,
+            models_dir=models_root,
+            error=str(exc),
+            drift_monitor=load_drift_monitor(cfg, models_root),
         )

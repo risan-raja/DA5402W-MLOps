@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 PREDICT_REQUESTS = Counter("predict_requests_total", "Total /predict requests")
 PREDICT_ERRORS = Counter("predict_errors_total", "Failed /predict requests")
@@ -20,4 +20,16 @@ PREDICT_CONFIDENCE = Histogram(
     "predict_confidence",
     "Softmax confidence of the predicted class",
     buckets=(0.5, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0),
+)
+DRIFT_PSI_CLASS = Gauge(
+    "drift_psi_class",
+    "PSI of the live predicted-class mix versus the fold-10 prior",
+)
+DRIFT_KS_CONFIDENCE = Gauge(
+    "drift_ks_confidence",
+    "KS statistic of live confidences versus the fold-10 reference",
+)
+DRIFT_WINDOW_SIZE = Gauge(
+    "drift_window_size",
+    "Filled observations in the live drift window",
 )

@@ -1,0 +1,33 @@
+%%{init: {
+  "theme": "neutral",
+  "flowchart": {
+    "curve": "basis",
+    "nodeSpacing": 22,
+    "rankSpacing": 40,
+    "padding": 8
+  },
+  "themeVariables": {
+    "fontFamily": "Helvetica, Arial, sans-serif",
+    "fontSize": "13px"
+  }
+}}%%
+flowchart LR
+  D1["HF Hub<br/>raw parquet"] --> D2["download<br/>+ validate"]
+  D2 --> D3["clean +<br/>augment"]
+  D3 --> D4["PySpark<br/>features"]
+  D4 --> D5["HF Hub<br/>interim / processed"]
+
+  D4 --> T1["Optuna<br/>4 models"]
+  T1 --> T2["MLflow<br/>registry"]
+  T2 --> T3["select<br/>winner"]
+  T3 --> T4["HF Hub<br/>model repo"]
+
+  T3 --> S1["FastAPI<br/>/health · /metrics · /predict"]
+  S1 --> S2["Prometheus<br/>+ Grafana"]
+
+  classDef data fill:#f5f5f5,stroke:#333,stroke-width:1px
+  classDef train fill:#efefef,stroke:#333,stroke-width:1px
+  classDef serve fill:#e8e8e8,stroke:#333,stroke-width:1px
+  class D1,D2,D3,D4,D5 data
+  class T1,T2,T3,T4 train
+  class S1,S2 serve

@@ -79,3 +79,12 @@ training:
     batch_size: 32
     patience: 5
     lr: 1.0e-4
+
+monitoring:
+  drift:
+    enabled: true
+    window_size: 100
+    reference_path: models/drift_reference.json
+    psi_warn: 0.1
+    psi_alert: 0.25
+    n_feature_bins: 10

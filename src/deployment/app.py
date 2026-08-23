@@ -18,6 +18,9 @@ from starlette.responses import Response
 
 from src.deployment.infer import predict_clip
 from src.deployment.metrics import (
+    DRIFT_KS_CONFIDENCE,
+    DRIFT_PSI_CLASS,
+    DRIFT_WINDOW_SIZE,
     PREDICT_CLASS,
     PREDICT_CONFIDENCE,
     PREDICT_ERRORS,
@@ -53,6 +56,19 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="da5402w", lifespan=lifespan)
+
+
+def _observe_drift(state: ServingState, label: str, confidence: float) -> None:
+    monitor = state.drift_monitor
+    if monitor is None:
+        return
+    snapshot = monitor.update(label, confidence)
+    DRIFT_WINDOW_SIZE.set(monitor.filled)
+    if snapshot is None:
+        return
+    DRIFT_PSI_CLASS.set(snapshot.psi_class)
+    if snapshot.ks_confidence is not None:
+        DRIFT_KS_CONFIDENCE.set(snapshot.ks_confidence)
 
 
 def _validate_upload(
@@ -105,6 +121,7 @@ async def predict(file: Annotated[UploadFile, File()]) -> PredictResponse:
             filename=filename,
             status="ok",
         )
+        _observe_drift(state, result["label"], float(result["confidence"]))
         return PredictResponse(latency_ms=round(latency_ms, 3), **result)
     except HTTPException as exc:
         PREDICT_ERRORS.inc()

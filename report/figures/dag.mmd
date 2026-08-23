@@ -1,0 +1,30 @@
+%%{init: {
+  "theme": "neutral",
+  "flowchart": {
+    "curve": "basis",
+    "nodeSpacing": 24,
+    "rankSpacing": 40,
+    "padding": 10
+  },
+  "themeVariables": {
+    "fontFamily": "Helvetica, Arial, sans-serif",
+    "fontSize": "13px"
+  }
+}}%%
+flowchart TB
+  A["download raw"] --> B["preprocess interim"]
+  B --> C["push interim HF"]
+  C --> D["spark features"]
+
+  D --> RF["train rf"]
+  D --> XGB["train xgboost"]
+  D --> LGB["train lightgbm"]
+  D --> CNN["train resnet18"]
+
+  RF --> SEL["select winner"]
+  XGB --> SEL
+  LGB --> SEL
+  CNN --> SEL
+
+  SEL --> PALL["push all models"]
+  PALL --> PWIN["push winner"]

@@ -1,7 +1,7 @@
 REPO := $(abspath .)
 export PYTHONPATH := $(REPO)
 
-.PHONY: airflow airflow-init compose compose-down pull-winner demo-predict report
+.PHONY: airflow airflow-init compose compose-down pull-winner demo-predict drift-reference drift-score report figures
 
 airflow-init:
 	mkdir -p $(REPO)/.airflow
@@ -27,5 +27,25 @@ pull-winner:
 demo-predict:
 	$(REPO)/.venv/bin/python -m src.deployment.demo --url http://localhost:8000
 
-report:
+LOG ?= predictions.jsonl
+
+drift-reference:
+	$(REPO)/.venv/bin/python -m src.monitoring.drift_cli --config $(REPO)/config/config.yaml build-reference --with-features
+
+drift-score:
+	$(REPO)/.venv/bin/python -m src.monitoring.drift_cli --config $(REPO)/config/config.yaml score-predictions $(LOG)
+
+report: figures
 	cd $(REPO)/report && pdflatex -interaction=nonstopmode main && bibtex main && pdflatex -interaction=nonstopmode main && pdflatex -interaction=nonstopmode main
+
+figures:
+	@command -v npx >/dev/null || (echo "npx required to render Mermaid figures" && exit 1)
+	cd $(REPO)/report/figures && \
+	  PUPPETEER_CFG=$$(mktemp) && \
+	  echo '{"args":["--no-sandbox","--disable-setuid-sandbox"]}' > $$PUPPETEER_CFG && \
+	  for name in architecture dag lifecycle; do \
+	    npx -y @mermaid-js/mermaid-cli@11 \
+	      -i $${name}.mmd -o $${name}.png \
+	      -t neutral -b white -w 1800 -s 2 \
+	      -p $$PUPPETEER_CFG; \
+	  done && rm -f $$PUPPETEER_CFG
