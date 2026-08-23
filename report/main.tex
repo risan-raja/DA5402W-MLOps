@@ -24,7 +24,7 @@ Chennai, India}}
 \begin{abstract}
 This report describes a production-style machine learning operations (MLOps) system for ten-class urban sound event classification on UrbanSound8K.
 A host-side Apache Airflow DAG with LocalExecutor downloads parquet clips from Hugging Face Hub, cleans and augments waveforms, extracts tabular and log-mel features with PySpark in local mode, and trains four models under Optuna and MLflow: random forest, XGBoost, LightGBM, and a ResNet-18 convolutional network.
-The winning artifact is a ResNet-18 with holdout F1-macro $0.862$ and official 10-fold CV F1-macro $0.760\pm 0.045$.
+The winning artifact is a ResNet-18 with holdout F1-macro $0.876$ and official 10-fold CV F1-macro $0.818\pm 0.040$.
 Dataset intermediates and trained weights are versioned on Hugging Face Hub.
 A FastAPI service inside Docker Compose exposes \texttt{/health}, \texttt{/metrics}, and \texttt{/predict}; Prometheus and Grafana scrape request, latency, class, confidence, and drift series, and each prediction is written as structured JSON.
 GitHub Actions lint, test, and build the API image.
@@ -304,20 +304,20 @@ Numbers are taken from \texttt{models/*/metrics.json}.
 \toprule
 Model & Acc. & F1-mac. & AUC & CV F1 \\
 \midrule
-RF & 0.720 & 0.721 & 0.956 & --- \\
+RF & 0.720 & 0.721 & 0.956 & $0.655\pm 0.043$ \\
 XGBoost & 0.771 & 0.776 & 0.961 & $0.689\pm 0.053$ \\
 LightGBM & 0.780 & 0.788 & 0.960 & $0.697\pm 0.054$ \\
-ResNet-18 & \textbf{0.848} & \textbf{0.862} & \textbf{0.987} & $\mathbf{0.760\pm 0.045}$ \\
+ResNet-18 & \textbf{0.864} & \textbf{0.876} & \textbf{0.991} & $\mathbf{0.818\pm 0.040}$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-ResNet-18 is the winner on both the holdout F1-macro ($0.862$) and CV F1-macro ($0.760\pm 0.045$).
+ResNet-18 is the winner on both the holdout F1-macro ($0.876$) and CV F1-macro ($0.818\pm 0.040$).
 Among tabular models LightGBM leads holdout F1 ($0.788$) and CV F1 ($0.697\pm 0.054$); XGBoost is close on CV ($0.689\pm 0.053$).
-Random forest is a usable baseline ($0.721$ holdout F1) but trails both boosters; that run's \texttt{metrics.json} has no CV block, so the table leaves the cell blank rather than inventing a number.
+Random forest is a usable baseline ($0.721$ holdout F1, CV $0.655\pm 0.043$) but trails both boosters.
 
 The gap between holdout and CV is why CV exists in the DAG.
-Fold 10 happened to be a favorable eval slice; rotating the test fold drops macro-F1 by about $0.09$--$0.10$ and exposes fold-to-fold variance (ResNet CV std $0.045$).
+Fold 10 happened to be a favorable eval slice; rotating the test fold drops ResNet macro-F1 by about $0.06$ and the tabular models by about $0.09$, with fold-to-fold variance (ResNet CV std $0.040$).
 Fold-10-only reporting would overstate deployed quality.
 CV-only reporting would hide the Optuna objective (fold 9) and the published holdout (fold 10), both of which a reader can still recompute from \texttt{winner.json}.
 
@@ -343,9 +343,9 @@ Those pairs overlap in spectrum and in the original recordings' background.
 
 Figure~\ref{fig:cm-lgb} is LightGBM on the same fold.
 The error structure is the same family, with a thicker siren-to-children-playing off-diagonal.
-The CNN's extra $0.08$ holdout F1 comes from cutting the confusions that a bag of MFCC and chroma summaries cannot separate.
+The CNN's extra $0.09$ holdout F1 comes from cutting the confusions that a bag of MFCC and chroma summaries cannot separate.
 
-Lineage in \texttt{winner.json} records the Hub dataset id, processed-set timestamp, tabular SHA, and MLflow run \texttt{c0057386aa71433883bf00dab8044e9f}.
+Lineage in \texttt{winner.json} records the Hub dataset id, processed-set timestamp, tabular SHA, and MLflow run \texttt{9cf8d81bed6b4ea99d91240e1e17133e}.
 A later retrain that does not match that SHA is a different artifact, even if the class name is still \texttt{resnet18}.
 
 Reproducibility for a grader is a short list: clone, \texttt{uv sync}, \texttt{make pull-winner} or a local \texttt{models/winner}, \texttt{make compose}, and \texttt{curl} a sample wav.
