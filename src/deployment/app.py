@@ -17,7 +17,13 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.responses import Response
 
 from src.deployment.infer import predict_clip
-from src.deployment.metrics import PREDICT_ERRORS, PREDICT_LATENCY, PREDICT_REQUESTS
+from src.deployment.metrics import (
+    PREDICT_CLASS,
+    PREDICT_CONFIDENCE,
+    PREDICT_ERRORS,
+    PREDICT_LATENCY,
+    PREDICT_REQUESTS,
+)
 from src.deployment.runtime import ServingState, load_serving_state
 from src.deployment.schemas import HealthResponse, PredictResponse
 from src.monitoring.logger import log_prediction
@@ -89,6 +95,8 @@ async def predict(file: Annotated[UploadFile, File()]) -> PredictResponse:
         result = predict_clip(state.model, data, state.config)
         latency_ms = (perf_counter() - started) * 1000.0
         PREDICT_LATENCY.observe(latency_ms / 1000.0)
+        PREDICT_CLASS.labels(class_name=result["label"]).inc()
+        PREDICT_CONFIDENCE.observe(float(result["confidence"]))
         log_prediction(
             label=result["label"],
             confidence=result["confidence"],

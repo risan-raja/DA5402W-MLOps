@@ -64,6 +64,7 @@ data/processed/*
 !data/interim/.gitkeep
 !data/processed/.gitkeep
 !data/sample_audio/
+!data/sample_audio/**
 
 # Models — pushed to the HF model repo directly; DVC manages its own
 # tracked paths via .dvc pointer files (added automatically by `dvc add`)

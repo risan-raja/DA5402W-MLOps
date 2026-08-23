@@ -1,7 +1,7 @@
 REPO := $(abspath .)
 export PYTHONPATH := $(REPO)
 
-.PHONY: airflow airflow-init compose compose-down pull-winner
+.PHONY: airflow airflow-init compose compose-down pull-winner demo-predict
 
 airflow-init:
 	mkdir -p $(REPO)/.airflow
@@ -23,3 +23,6 @@ compose-down:
 
 pull-winner:
 	$(REPO)/.venv/bin/python -m src.data_processing.versioning pull-winner $(REPO)/models
+
+demo-predict:
+	$(REPO)/.venv/bin/python -m src.deployment.demo --url http://localhost:8000

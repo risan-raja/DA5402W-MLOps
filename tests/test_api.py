@@ -125,3 +125,6 @@ def test_predict_tabular_winner_contract(isolated_env):
     assert set(body["probabilities"]) == set(CLASS_NAMES)
     assert "predict_requests_total" in metrics.text
     assert "predict_latency_seconds" in metrics.text
+    assert "predict_class_total" in metrics.text
+    assert "predict_confidence" in metrics.text
+    assert f'class_name="{body["label"]}"' in metrics.text

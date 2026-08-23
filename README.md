@@ -122,11 +122,17 @@ curl http://localhost:8000/health
 curl -X POST http://localhost:8000/predict \
   -F "file=@data/sample_audio/dog_bark_sample.wav"
 
+# send 3 clips × 10 classes so Prometheus/Grafana record request rate + latency
+make demo-predict
+# slower pass (15s scrape): python -m src.deployment.demo --repeat 2 --delay 1
+
 # Prometheus scrape target
 curl http://localhost:8000/metrics
 ```
 
 `/predict` accepts a `.wav` file and returns the predicted class, confidence, `model_name`, `latency_ms`, and the 10-class `probabilities` map. Malformed, oversized, or non-`.wav` uploads return a structured error. If no winner is loaded, `/predict` returns 503 while `/health` stays 200.
+
+Grafana is at [http://localhost:3000](http://localhost:3000). Sign in with `GF_SECURITY_ADMIN_USER` / `GF_SECURITY_ADMIN_PASSWORD` from `.env` (defaults: `admin` / `admin`). Open the provisioned **API Overview** dashboard.
 
 ## Docker execution
 
