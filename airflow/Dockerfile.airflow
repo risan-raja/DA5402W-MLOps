@@ -3,7 +3,11 @@ FROM apache/airflow:latest-python3.13
 USER root
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openjdk-17-jre-headless libsndfile1 \
+    && apt-get install -y --no-install-recommends \
+        openjdk-17-jre-headless \
+        libsndfile1 \
+        libgomp1 \
+        g++ \
     && ln -sfn /usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture) /usr/lib/jvm/java-17 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -13,12 +17,24 @@ ENV JAVA_HOME=/usr/lib/jvm/java-17
 USER airflow
 
 RUN pip install --no-cache-dir \
-    "pyspark==4.2.0" \
-    "librosa>=1.0.0" \
-    "soundfile>=0.14.0" \
-    "numpy>=2.0.0" \
-    "pandas>=2.3.0" \
-    "pyarrow>=18.0.0" \
-    "pyyaml>=6.0.0" \
-    "huggingface-hub>=1.28.0" \
-    "datasets>=5.0.1"
+        torch torchvision \
+        --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir \
+        "pyspark==4.2.0" \
+        "librosa>=0.8.0,<0.12.0" \
+        "soundfile>=0.14.0" \
+        "numpy>=2.0.0" \
+        "pandas>=2.3.0" \
+        "pyarrow>=18.0.0" \
+        "pyyaml>=6.0.0" \
+        "huggingface-hub>=1.28.0" \
+        "datasets>=5.0.1" \
+        "scipy>=1.14.0" \
+        "audiomentations>=0.43.1" \
+        "scikit-learn>=1.9.0" \
+        "xgboost>=3.4.1" \
+        "lightgbm>=4.6.0" \
+        "mlflow>=3.15.1" \
+        "optuna>=4.9.0" \
+        "python-dotenv>=1.0.0" \
+        "matplotlib>=3.9.0"

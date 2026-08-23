@@ -1,0 +1,21 @@
+%%{init: {
+  "theme": "neutral",
+  "flowchart": {
+    "curve": "basis",
+    "nodeSpacing": 26,
+    "rankSpacing": 36,
+    "padding": 10
+  },
+  "themeVariables": {
+    "fontFamily": "Helvetica, Arial, sans-serif",
+    "fontSize": "13px"
+  }
+}}%%
+flowchart LR
+  F["processed<br/>features"] --> S["fold split<br/>1–8 / 9 / 10"]
+  S --> O["Optuna TPE<br/>20 trials on fold 9"]
+  O --> R["refit<br/>folds 1–9"]
+  R --> H["holdout<br/>fold 10"]
+  H --> C["optional<br/>10-fold CV"]
+  C --> L["log artifact<br/>+ MLflow"]
+  L --> W["select winner<br/>+ Hub push"]

@@ -15,6 +15,8 @@ dataset:
     - "interim/**"
 
 preprocessing:
+  # When false, the DAG preprocess_interim task is a no-op (reuse data/interim).
+  enabled: false
   local_interim_dir: data/interim
   target_sample_rate: 16000
   eval_fold: 10
@@ -24,6 +26,8 @@ preprocessing:
   seed: 42
 
 spark:
+  # When false, the DAG spark_feature_extraction task is a no-op (reuse data/processed).
+  enabled: false
   local_processed_dir: data/processed
   # Keep heap small; throughput comes from batching, not a huge driver.
   driver_memory: "1g"
@@ -45,3 +49,42 @@ versioning:
   # Default push prefix for versioning CLI; Spark uses processed_path_in_repo when --push.
   path_in_repo: interim
   processed_path_in_repo: processed
+  # Opt-in HF Hub uploads from the Airflow DAG / Spark extractor (also via --push CLI).
+  push_interim: false
+  push_processed: false
+  # Separate model-type repo for trained artifacts (not the dataset repo).
+  hf_model_repo_id: risan-raja-iitm/urbansound8k-models
+  hf_model_repo_type: model
+  push_models: true
+
+training:
+  processed_dir: data/processed
+  models_dir: models
+  mlflow_experiment: urbansound8K-submission
+  mlflow_tracking_uri: sqlite:///mlflow/mlflow.db
+  mlflow_artifact_root: ./mlflow/artifacts
+  train_folds: [1, 2, 3, 4, 5, 6, 7, 8]
+  # train_folds: [1, 2]
+  val_fold: 9
+  eval_fold: 10
+  n_trials: 20
+  # Official UrbanSound8K 10-fold eval CV (after Optuna). Off by default for fast iteration.
+  cv:
+    enabled: true
+    n_folds: 10
+  seed: 42
+  models: [rf, xgboost, lightgbm, resnet18]
+  cnn:
+    epochs: 10
+    batch_size: 32
+    patience: 5
+    lr: 1.0e-4
+
+monitoring:
+  drift:
+    enabled: true
+    window_size: 100
+    reference_path: models/drift_reference.json
+    psi_warn: 0.1
+    psi_alert: 0.25
+    n_feature_bins: 10

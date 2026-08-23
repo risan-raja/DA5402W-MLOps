@@ -1,104 +1,18 @@
-x-airflow-common: &airflow-common
-  build:
-    context: ..
-    dockerfile: airflow/Dockerfile.airflow
-  env_file:
-    - ../.env
-  environment: &airflow-common-env
-    AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
-    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
-    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
-    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "True"
-    # Airflow 3 task SDK must reach the api-server container (not localhost on the scheduler).
-    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-webserver:8080/execution/
-    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-da5402w-dev-jwt-secret-change-me}
-    PYTHONPATH: /opt/airflow
-    JAVA_HOME: /usr/lib/jvm/java-17
-    # Full HF push from the DAG is opt-in (heavy); local extract is the default.
-    PUSH_PROCESSED: ${PUSH_PROCESSED:-0}
-  volumes:
-    - ../airflow/dags:/opt/airflow/dags
-    - ../src:/opt/airflow/src
-    - ../data:/opt/airflow/data
-    - ../config:/opt/airflow/config
-    - airflow-logs:/opt/airflow/logs
-  user: "${AIRFLOW_UID:-50000}:0"
-  depends_on:
-    postgres:
-      condition: service_healthy
-
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
-      POSTGRES_DB: airflow
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "airflow"]
-      interval: 5s
-      retries: 5
-    restart: unless-stopped
-
-  airflow-init:
-    <<: *airflow-common
-    entrypoint: /bin/bash
-    command:
-      - -c
-      - |
-        airflow db migrate
-    restart: "no"
-
-  airflow-webserver:
-    <<: *airflow-common
-    command: api-server
-    ports:
-      - "8080:8080"
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-    restart: unless-stopped
-    depends_on:
-      airflow-init:
-        condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
-
-  airflow-scheduler:
-    <<: *airflow-common
-    command: scheduler
-    restart: unless-stopped
-    depends_on:
-      airflow-init:
-        condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
-
-  # Airflow 3+: DAG parsing is a separate process (scheduler no longer embeds it).
-  airflow-dag-processor:
-    <<: *airflow-common
-    command: dag-processor
-    restart: unless-stopped
-    depends_on:
-      airflow-init:
-        condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
-
   api:
     build:
       context: ..
       dockerfile: docker/Dockerfile.api
     ports:
       - "8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      DA5402W_CONFIG: /app/config/config.yaml
+      DA5402W_MODELS_DIR: /app/models
     volumes:
       - ../models:/app/models:ro
+      - ../config:/app/config:ro
       - ../data/sample_audio:/app/data/sample_audio:ro
     restart: unless-stopped
 
@@ -109,7 +23,9 @@ services:
       --host 0.0.0.0
       --port 5000
       --backend-store-uri sqlite:///mlflow/mlflow.db
-      --default-artifact-root /mlflow/artifacts
+      --artifacts-destination /mlflow/artifacts
+      --default-artifact-root mlflow-artifacts:/
+      --allowed-hosts "mlflow,mlflow:5000,localhost,localhost:*,127.0.0.1,127.0.0.1:*"
     ports:
       - "5001:5000"
     volumes:
@@ -144,7 +60,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  postgres-data:
-  airflow-logs:
   prometheus-data:
   grafana-data:

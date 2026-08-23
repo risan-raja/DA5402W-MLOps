@@ -33,6 +33,20 @@ def _manifest_path(local_dir: Path) -> Path:
     return local_dir / MANIFEST_FILENAME
 
 
+def raw_data_present(local_raw_dir: Path | str | None = None) -> bool:
+    """True when local raw has a manifest and at least one parquet under ``data/``."""
+    if local_raw_dir is None:
+        local_raw_dir = Path(load_config()["local_raw_dir"])
+    else:
+        local_raw_dir = Path(local_raw_dir)
+    parquet_dir = local_raw_dir / "data"
+    if not _manifest_path(local_raw_dir).is_file():
+        return False
+    if not parquet_dir.is_dir():
+        return False
+    return any(parquet_dir.glob("*.parquet"))
+
+
 def _read_existing_manifest(local_dir: Path) -> dict | None:
     manifest_path = _manifest_path(local_dir)
     if not manifest_path.exists():

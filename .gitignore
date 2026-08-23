@@ -64,11 +64,13 @@ data/processed/*
 !data/interim/.gitkeep
 !data/processed/.gitkeep
 !data/sample_audio/
+!data/sample_audio/**
 
 # Models — pushed to the HF model repo directly; DVC manages its own
 # tracked paths via .dvc pointer files (added automatically by `dvc add`)
 models/*
 !models/.gitkeep
+!models/drift_reference.json
 
 # MLflow — regenerable local experiment state, not versioned source.
 # mlflow/ is bind-mounted into the mlflow container so bare-metal and
@@ -82,7 +84,8 @@ mlartifacts/
 .dvc/cache
 .dvc/tmp
 
-# Airflow — local runtime state (standalone mode or docker-mounted volumes)
+# Airflow — local runtime state (host LocalExecutor home)
+.airflow/
 airflow/logs/
 airflow/airflow.db
 airflow/airflow-webserver.pid
@@ -94,6 +97,7 @@ docker/volumes/
 # Secrets & credentials — never commit
 .env
 .env.*
+!.env.example
 *.pem
 credentials.json
 kaggle.json
@@ -101,3 +105,6 @@ kaggle.json
 
 # Graphify 
 graphify-out/
+
+# Offline drift CLI demo log (generated if missing)
+predictions.jsonl
