@@ -108,3 +108,6 @@ graphify-out/
 
 # Offline drift CLI demo log (generated if missing)
 predictions.jsonl
+
+# Generated type-coverage reports (make type-coverage)
+reports/

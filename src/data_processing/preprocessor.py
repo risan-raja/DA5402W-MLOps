@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.dataset as ds
 import soundfile as sf
+from pandas import DataFrame
 
 from src.config import (
     DEFAULT_CONFIG_PATH,
@@ -21,7 +22,7 @@ from src.config import (
 from src.config import (
     load_preprocessing_config as _load_preprocessing_config,
 )
-from src.config_types import AppConfig, PreprocessingConfig
+from src.config_types import AppConfig, DatasetConfig, PreprocessingConfig
 from src.data_processing.audio_augmentor import augment_waveform, build_augmentations
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -83,7 +84,7 @@ def fold_split(
         eval_mask = eval_mask & ~frame["is_augmented"].astype(bool)
         train = frame.loc[frame[fold_column] != eval_fold].reset_index(drop=True)
     else:
-        train = frame.loc[~eval_mask].reset_index(drop=True)
+        train: DataFrame = frame.loc[~eval_mask].reset_index(drop=True)
     eval_df = frame.loc[eval_mask].reset_index(drop=True)
     return train, eval_df
 
@@ -118,9 +119,9 @@ def process_raw_to_interim(
 
     Train folds get ``augment_copies`` on-disk siblings; the eval fold does not.
     """
-    full = config if config is not None else load_full_config()
-    dataset_cfg = full["dataset"]
-    prep = full["preprocessing"]
+    full: AppConfig = config if config is not None else load_full_config()
+    dataset_cfg: DatasetConfig = full["dataset"]
+    prep: PreprocessingConfig = full["preprocessing"]
 
     raw_dir = Path(raw_dir or dataset_cfg["local_raw_dir"])
     interim_dir = Path(interim_dir or prep["local_interim_dir"])
