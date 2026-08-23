@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import cast
 
 import joblib
 import mlflow
 import optuna
+import pandas as pd
 from mlflow.models import infer_signature
 
+from src.artifact_types import DatasetLineage, FoldMetricRow, TrainResult
+from src.config_types import SparkConfig, TrainingConfig
 from src.models.baseline_model import fit_predict_proba, suggest_params
 from src.models.cross_validation import aggregate_fold_metrics, log_cv_results
 from src.models.data import (
@@ -35,19 +39,19 @@ from src.models.mlflow_logging import (
     save_json,
 )
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 def train_tabular_model(
     model_name: str,
     *,
-    train_cfg: dict,
-    spark_cfg: dict,
-    tabular,
+    train_cfg: TrainingConfig | dict[str, object],
+    spark_cfg: SparkConfig | dict[str, object],
+    tabular: pd.DataFrame,
     n_trials: int,
     seed: int,
-    lineage: dict,
-) -> dict:
+    lineage: DatasetLineage,
+) -> TrainResult:
     train_folds = list(train_cfg["train_folds"])
     val_fold = int(train_cfg["val_fold"])
     eval_fold = int(train_cfg["eval_fold"])
@@ -179,7 +183,7 @@ def train_tabular_model(
             # Global label map so fold-local class gaps do not renumber IDs.
             cv_label_to_id, _ = build_label_maps(tabular["class"])
             cv_n_classes = len(cv_label_to_id)
-            fold_rows: list[dict] = []
+            fold_rows: list[FoldMetricRow] = []
             logger.info(
                 "Running UrbanSound8K %s-fold eval CV for %s", n_folds, model_name
             )
@@ -208,7 +212,9 @@ def train_tabular_model(
                     y_proba=proba_cv,
                     labels=list(range(cv_n_classes)),
                 )
-                fold_rows.append({"fold": int(test_fold), **fold_metrics})
+                fold_rows.append(
+                    cast(FoldMetricRow, {"fold": int(test_fold), **fold_metrics})
+                )
             aggregate = aggregate_fold_metrics(fold_rows)
             metrics.update(aggregate)
             log_cv_results(fold_rows, aggregate, out_dir)

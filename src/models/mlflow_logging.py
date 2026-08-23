@@ -23,24 +23,28 @@ from mlflow.data.meta_dataset import MetaDataset
 from mlflow.exceptions import MlflowException
 from mlflow.tracking import MlflowClient
 
-logger = logging.getLogger(__name__)
+from src.artifact_types import DatasetLineage, FileFingerprint
+from src.config_types import TrainingConfig
+from src.model_protocols import SupportsPredictProba
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
-def ensure_mlflow(train_cfg: dict) -> None:
+def ensure_mlflow(train_cfg: TrainingConfig | dict[str, object]) -> None:
     tracking = os.environ.get("MLFLOW_TRACKING_URI") or train_cfg["mlflow_tracking_uri"]
     mlflow.set_tracking_uri(tracking)
     Path(train_cfg["mlflow_artifact_root"]).mkdir(parents=True, exist_ok=True)
     mlflow.set_experiment(train_cfg["mlflow_experiment"])
 
 
-def save_json(path: Path, payload: dict) -> None:
+def save_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(payload, f, indent=2)
 
 
-def jsonable_params(params: dict) -> dict:
-    out = {}
+def jsonable_params(params: dict[str, object]) -> dict[str, object]:
+    out: dict[str, object] = {}
     for k, v in params.items():
         if isinstance(v, (np.integer, int)):
             out[k] = int(v)
@@ -51,7 +55,9 @@ def jsonable_params(params: dict) -> dict:
     return out
 
 
-def log_dataset_lineage(lineage: dict, *, model_name: str | None = None) -> MetaDataset:
+def log_dataset_lineage(
+    lineage: DatasetLineage, *, model_name: str | None = None
+) -> MetaDataset:
     """Log dataset provenance params/tags and register an MLflow Dataset input."""
     scalar_keys = (
         "hf_repo_id",
@@ -64,8 +70,8 @@ def log_dataset_lineage(lineage: dict, *, model_name: str | None = None) -> Meta
         "processed_num_rows",
         "processed_num_input_rows",
     )
-    params: dict = {}
-    tags: dict = {}
+    params: dict[str, object] = {}
+    tags: dict[str, str] = {}
     for key in scalar_keys:
         val = lineage.get(key)
         if val is None or val == "":
@@ -74,8 +80,8 @@ def log_dataset_lineage(lineage: dict, *, model_name: str | None = None) -> Meta
         params[f"data_{key}"] = s[:250]
         tags[f"data.{key}"] = s[:5000]
 
-    tab = lineage.get("tabular") or {}
-    mel = lineage.get("mels") or {}
+    tab: FileFingerprint = lineage.get("tabular") or {}
+    mel: FileFingerprint = lineage.get("mels") or {}
     if tab.get("sha256"):
         params["data_tabular_sha256"] = tab["sha256"][:64]
         tags["data.tabular_sha256"] = tab["sha256"]
@@ -96,7 +102,7 @@ def log_dataset_lineage(lineage: dict, *, model_name: str | None = None) -> Meta
 
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "dataset_lineage.json"
-        slim = {
+        slim: dict[str, object] = {
             k: v
             for k, v in lineage.items()
             if k not in {"processed_manifest", "interim_manifest", "raw_manifest"}
@@ -126,7 +132,6 @@ def log_dataset_lineage(lineage: dict, *, model_name: str | None = None) -> Meta
     )
     register_dataset_input(dataset)
     return dataset
-
 
 def register_dataset_input(dataset: MetaDataset, *, attempts: int = 5) -> None:
     """Attach ``dataset`` to the active run.
@@ -212,7 +217,7 @@ def register_and_tag(
     model_name: str,
     run_id: str,
     metrics: dict[str, float],
-    lineage: dict,
+    lineage: DatasetLineage,
     *,
     is_winner: bool,
 ) -> None:
@@ -237,7 +242,11 @@ def register_and_tag(
     )
 
 
-def log_sklearn_family_model(model_name: str, model, signature) -> None:
+def log_sklearn_family_model(
+    model_name: str,
+    model: SupportsPredictProba,
+    signature: object,
+) -> None:
     # name="model" keeps runs:/{id}/model resolvable for Model Registry.
     if model_name == "rf":
         mlflow.sklearn.log_model(model, name="model", signature=signature)

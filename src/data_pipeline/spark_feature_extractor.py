@@ -7,13 +7,14 @@ import logging
 import os
 import shutil
 import sys
+from collections.abc import Iterable, Iterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
-import yaml
 from pyspark.sql import Row, SparkSession
 from pyspark.sql.types import (
     ArrayType,
@@ -27,6 +28,8 @@ from pyspark.sql.types import (
     StructType,
 )
 
+from src.config import DEFAULT_CONFIG_PATH, load_app_config
+from src.config_types import AppConfig, SparkConfig
 from src.data_pipeline.audio_features import (
     decode_wav,
     extract_log_mel,
@@ -36,10 +39,10 @@ from src.data_pipeline.audio_features import (
 )
 from src.data_processing.versioning import push_dataset_tree
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = ROOT / "config" / "config.yaml"
+CONFIG_PATH = DEFAULT_CONFIG_PATH
 MANIFEST_FILENAME = ".manifest.json"
 TABULAR_FILENAME = "tabular.parquet"
 MELS_FILENAME = "mels.parquet"
@@ -54,14 +57,23 @@ META_COLS = (
 )
 
 
-def load_full_config(config_path: Path = CONFIG_PATH) -> dict:
-    with open(config_path) as f:
-        return yaml.safe_load(f)
+def _as_int(value: object) -> int:
+    return int(cast(int | float | str | bool, value))
+
+
+def _as_float(value: object) -> float:
+    return float(cast(int | float | str, value))
+
+
+def load_full_config(config_path: Path = CONFIG_PATH) -> AppConfig:
+    return load_app_config(config_path)
 
 
 def extract_clip_features(
-    abs_wav_path: Path | str, meta: dict, spark_cfg: dict
-) -> dict | None:
+    abs_wav_path: Path | str,
+    meta: Mapping[str, object],
+    spark_cfg: SparkConfig | Mapping[str, object],
+) -> dict[str, dict[str, object]] | None:
     """Return ``{"tabular": dict, "mel": dict}`` or None if the clip cannot be read."""
     try:
         y, sr = decode_wav(abs_wav_path)
@@ -98,9 +110,16 @@ def extract_clip_features(
     return {"tabular": tabular, "mel": mel}
 
 
-def _extract_partition(rows, spark_cfg: dict):
+def _extract_partition(
+    rows: Iterable[Mapping[str, object]],
+    spark_cfg: SparkConfig | Mapping[str, object],
+) -> Iterator[dict[str, dict[str, object]]]:
     for row in rows:
-        result = extract_clip_features(row["_abs_path"], row, spark_cfg)
+        result = extract_clip_features(
+            cast(str | Path, row["_abs_path"]),
+            row,
+            spark_cfg,
+        )
         if result is not None:
             yield result
 
@@ -136,34 +155,36 @@ def _mel_schema() -> StructType:
     )
 
 
-def _to_tabular_row(record: dict, feature_names: list[str]) -> Row:
+def _to_tabular_row(
+    record: dict[str, dict[str, object]], feature_names: list[str]
+) -> Row:
     t = record["tabular"]
-    values = [
+    values: list[object] = [
         t["path"],
         t["slice_file_name"],
-        int(t["fold"]),
+        _as_int(t["fold"]),
         t["class"],
-        int(t["classID"]),
+        _as_int(t["classID"]),
         bool(t["is_augmented"]),
-        int(t["aug_index"]),
+        _as_int(t["aug_index"]),
     ]
-    values.extend(float(t[name]) for name in feature_names)
+    values.extend(_as_float(t[name]) for name in feature_names)
     return Row(*values)
 
 
-def _to_mel_row(record: dict) -> Row:
+def _to_mel_row(record: dict[str, dict[str, object]]) -> Row:
     m = record["mel"]
     return Row(
         m["path"],
         m["slice_file_name"],
-        int(m["fold"]),
+        _as_int(m["fold"]),
         m["class"],
-        int(m["classID"]),
+        _as_int(m["classID"]),
         bool(m["is_augmented"]),
-        int(m["aug_index"]),
+        _as_int(m["aug_index"]),
         m["mel"],
-        int(m["mel_height"]),
-        int(m["mel_width"]),
+        _as_int(m["mel_height"]),
+        _as_int(m["mel_width"]),
     )
 
 
@@ -196,7 +217,7 @@ def _finalize_spark_parquet_dir(spark_out_dir: Path, dest_file: Path) -> None:
     shutil.rmtree(spark_out_dir)
 
 
-def _chunked(items: list, size: int):
+def _chunked[T](items: list[T], size: int) -> Iterator[list[T]]:
     for i in range(0, len(items), size):
         yield items[i : i + size]
 
@@ -225,13 +246,13 @@ def _stream_merge_files(parts: list[Path], dest_file: Path) -> None:
 def extract_features(
     interim_dir: Path | str | None = None,
     processed_dir: Path | str | None = None,
-    config: dict | None = None,
+    config: AppConfig | None = None,
     *,
     push: bool = False,
     max_rows: int | None = None,
     force: bool = False,
-) -> dict:
-    full = config or load_full_config()
+) -> dict[str, object]:
+    full = config if config is not None else load_full_config()
     prep = full["preprocessing"]
     spark_cfg = full["spark"]
     interim_dir = Path(interim_dir or prep["local_interim_dir"])

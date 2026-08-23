@@ -6,12 +6,21 @@ import hashlib
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
-import yaml
 from sklearn.preprocessing import StandardScaler
 
+from src.artifact_types import DatasetLineage, FileFingerprint, MelStats
+from src.config import (
+    DEFAULT_CONFIG_PATH,
+    load_app_config,
+)
+from src.config import (
+    load_training_config as _load_training_config,
+)
+from src.config_types import AppConfig, TrainingConfig
 from src.data_pipeline.audio_features import (
     normalize_mels as _normalize_mels,
 )
@@ -19,26 +28,28 @@ from src.data_pipeline.audio_features import tabular_feature_names
 from src.data_pipeline.spark_feature_extractor import MELS_FILENAME, TABULAR_FILENAME
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = ROOT / "config" / "config.yaml"
+CONFIG_PATH = DEFAULT_CONFIG_PATH
 
 
-def load_full_config(config_path: Path = CONFIG_PATH) -> dict:
-    with open(config_path) as f:
-        return yaml.safe_load(f)
+def load_full_config(config_path: Path = CONFIG_PATH) -> AppConfig:
+    return load_app_config(config_path)
 
 
-def load_training_config(config_path: Path = CONFIG_PATH) -> dict:
-    return load_full_config(config_path)["training"]
+def load_training_config(config_path: Path = CONFIG_PATH) -> TrainingConfig:
+    return _load_training_config(config_path)
 
 
-def _read_json_if_exists(path: Path) -> dict | None:
+def _read_json_if_exists(path: Path) -> dict[str, object] | None:
     if not path.is_file():
         return None
     with open(path) as f:
-        return json.load(f)
+        payload = json.load(f)
+    if not isinstance(payload, dict):
+        raise TypeError(f"expected JSON object in {path}")
+    return cast(dict[str, object], payload)
 
 
-def _fingerprint(path: Path) -> dict:
+def _fingerprint(path: Path) -> FileFingerprint:
     """Size/mtime plus a fast content digest (head+tail) — full SHA of ~1GB mels is too slow."""
     if not path.is_file():
         return {"path": str(path), "exists": False}
@@ -65,19 +76,17 @@ def _fingerprint(path: Path) -> dict:
 
 def collect_dataset_lineage(
     processed_dir: Path | str,
-    full_config: dict | None = None,
-) -> dict:
+    full_config: AppConfig | None = None,
+) -> DatasetLineage:
     """Provenance for MLflow: HF repo + interim/processed manifests + file fingerprints."""
     processed_dir = Path(processed_dir)
-    cfg = full_config or load_full_config()
-    dataset_cfg = cfg.get("dataset", {})
+    cfg = full_config if full_config is not None else load_full_config()
+    dataset_cfg = cfg["dataset"]
 
-    interim_dir = Path(
-        cfg.get("preprocessing", {}).get("local_interim_dir", "data/interim")
-    )
+    interim_dir = Path(cfg["preprocessing"]["local_interim_dir"])
     if not interim_dir.is_absolute():
         interim_dir = ROOT / interim_dir
-    raw_dir = Path(dataset_cfg.get("local_raw_dir", "data/raw"))
+    raw_dir = Path(dataset_cfg["local_raw_dir"])
     if not raw_dir.is_absolute():
         raw_dir = ROOT / raw_dir
 
@@ -88,13 +97,15 @@ def collect_dataset_lineage(
     return {
         "hf_repo_id": dataset_cfg.get("hf_repo_id"),
         "hf_repo_type": dataset_cfg.get("hf_repo_type", "dataset"),
-        "raw_revision": raw_manifest.get("revision"),
-        "raw_downloaded_at": raw_manifest.get("downloaded_at"),
-        "interim_created_at": interim_manifest.get("created_at"),
-        "interim_num_rows": interim_manifest.get("num_rows_written"),
-        "processed_created_at": processed_manifest.get("created_at"),
-        "processed_num_rows": processed_manifest.get("num_written"),
-        "processed_num_input_rows": processed_manifest.get("num_input_rows"),
+        "raw_revision": cast(str | None, raw_manifest.get("revision")),
+        "raw_downloaded_at": cast(str | None, raw_manifest.get("downloaded_at")),
+        "interim_created_at": cast(str | None, interim_manifest.get("created_at")),
+        "interim_num_rows": cast(int | None, interim_manifest.get("num_rows_written")),
+        "processed_created_at": cast(str | None, processed_manifest.get("created_at")),
+        "processed_num_rows": cast(int | None, processed_manifest.get("num_written")),
+        "processed_num_input_rows": cast(
+            int | None, processed_manifest.get("num_input_rows")
+        ),
         "tabular": _fingerprint(processed_dir / TABULAR_FILENAME),
         "mels": _fingerprint(processed_dir / MELS_FILENAME),
         "processed_manifest": processed_manifest,
@@ -199,7 +210,7 @@ def mels_array(frame: pd.DataFrame) -> np.ndarray:
     return np.stack(arrays, axis=0)
 
 
-def fit_mel_stats(mels: np.ndarray) -> dict[str, float]:
+def fit_mel_stats(mels: np.ndarray) -> MelStats:
     if mels.size == 0:
         raise ValueError("cannot fit mel stats on empty array")
     return {
@@ -208,7 +219,7 @@ def fit_mel_stats(mels: np.ndarray) -> dict[str, float]:
     }
 
 
-def normalize_mels(mels: np.ndarray, stats: dict[str, float]) -> np.ndarray:
+def normalize_mels(mels: np.ndarray, stats: MelStats) -> np.ndarray:
     return _normalize_mels(mels, stats)
 
 

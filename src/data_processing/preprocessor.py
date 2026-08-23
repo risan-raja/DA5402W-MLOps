@@ -13,27 +13,32 @@ import numpy as np
 import pandas as pd
 import pyarrow.dataset as ds
 import soundfile as sf
-import yaml
 
+from src.config import (
+    DEFAULT_CONFIG_PATH,
+    load_app_config,
+)
+from src.config import (
+    load_preprocessing_config as _load_preprocessing_config,
+)
+from src.config_types import AppConfig, PreprocessingConfig
 from src.data_processing.audio_augmentor import augment_waveform, build_augmentations
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = ROOT / "config" / "config.yaml"
+CONFIG_PATH = DEFAULT_CONFIG_PATH
 MANIFEST_FILENAME = ".manifest.json"
 METADATA_FILENAME = "metadata.parquet"
 AUDIO_DIRNAME = "audio"
 
 
-def load_full_config(config_path: Path = CONFIG_PATH) -> dict:
-    with open(config_path) as f:
-        return yaml.safe_load(f)
+def load_full_config(config_path: Path = CONFIG_PATH) -> AppConfig:
+    return load_app_config(config_path)
 
 
-def load_preprocessing_config(config_path: Path = CONFIG_PATH) -> dict:
-    return load_full_config(config_path)["preprocessing"]
-
+def load_preprocessing_config(config_path: Path = CONFIG_PATH) -> PreprocessingConfig:
+    return _load_preprocessing_config(config_path)
 
 def clean_clip(
     y: np.ndarray,
@@ -104,16 +109,16 @@ def _write_wav(path: Path, y: np.ndarray, sr: int) -> None:
 def process_raw_to_interim(
     raw_dir: Path | str | None = None,
     interim_dir: Path | str | None = None,
-    config: dict | None = None,
+    config: AppConfig | None = None,
     *,
     max_rows: int | None = None,
     force: bool = False,
-) -> dict:
+) -> dict[str, object]:
     """Decode/clean raw parquet audio into interim wavs + metadata.parquet.
 
     Train folds get ``augment_copies`` on-disk siblings; the eval fold does not.
     """
-    full = config or load_full_config()
+    full = config if config is not None else load_full_config()
     dataset_cfg = full["dataset"]
     prep = full["preprocessing"]
 

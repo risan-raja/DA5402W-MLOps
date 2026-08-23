@@ -6,32 +6,49 @@ import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol, cast
 
 import pyarrow.compute as pc
 import pyarrow.dataset as ds
-import yaml
 from huggingface_hub import HfApi, snapshot_download
 
-logger = logging.getLogger(__name__)
+from src.artifact_types import SchemaValidationResult
+from src.config import DEFAULT_CONFIG_PATH, load_app_config, load_dataset_config
+from src.config_types import AppConfig, DatasetConfig
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = ROOT / "config" / "config.yaml"
+CONFIG_PATH = DEFAULT_CONFIG_PATH
 MANIFEST_FILENAME = ".manifest.json"
 METADATA_FILENAME = "metadata.parquet"
 AUDIO_DIRNAME = "audio"
 TABULAR_FILENAME = "tabular.parquet"
 MELS_FILENAME = "mels.parquet"
-VALID_TARGETS = frozenset({"raw", "interim", "processed"})
+VALID_TARGETS: frozenset[str] = frozenset({"raw", "interim", "processed"})
 
 
-def load_full_config(config_path: Path = CONFIG_PATH) -> dict:
-    with open(config_path) as f:
-        return yaml.safe_load(f)
+class _ArrowTableLike(Protocol):
+    def column(self, name: str) -> object: ...
 
 
-def load_config(config_path: Path = CONFIG_PATH) -> dict:
-    return load_full_config(config_path)["dataset"]
+class _ArrowDatasetLike(Protocol):
+    """Minimal surface of ``pyarrow.dataset.Dataset`` used by schema checks."""
 
+    @property
+    def schema(self) -> object: ...
+
+    def count_rows(self) -> int: ...
+
+    def to_table(self, columns: list[str] | None = None) -> _ArrowTableLike: ...
+
+
+def load_full_config(config_path: Path = CONFIG_PATH) -> AppConfig:
+    return load_app_config(config_path)
+
+
+def load_config(config_path: Path = CONFIG_PATH) -> DatasetConfig:
+    return load_dataset_config(config_path)
 
 def _manifest_path(local_dir: Path) -> Path:
     return local_dir / MANIFEST_FILENAME
@@ -93,14 +110,17 @@ def _write_manifest(local_dir: Path, manifest: dict) -> None:
         json.dump(manifest, f, indent=2)
 
 
-def validate_schema(table: ds.Dataset, config: dict) -> dict:
+def validate_schema(
+    table: _ArrowDatasetLike, config: DatasetConfig
+) -> SchemaValidationResult:
     num_rows = table.count_rows()
     if num_rows != config["expected_rows"]:
         raise ValueError(
             f"Row count mismatch: expected {config['expected_rows']}, got {num_rows}"
         )
 
-    columns = table.schema.names
+    schema = table.schema
+    columns = cast(list[str], getattr(schema, "names", []))
     fold_col = config["fold_column"]
     label_col = config["label_column"]
     if fold_col not in columns:
@@ -307,11 +327,11 @@ def _download_processed(
 
 
 def download_dataset(
-    config: dict | None = None,
+    config: DatasetConfig | dict[str, object] | None = None,
     force: bool = False,
     allow_patterns: list[str] | None = None,
     targets: list[str] | tuple[str, ...] | None = None,
-) -> dict:
+) -> dict[str, object]:
     """Download from ``dataset.hf_repo_id`` (raw, ``interim/``, and/or ``processed/``).
 
     ``targets`` defaults to ``["raw"]``. Use ``["interim"]``, ``["processed"]``, or
@@ -321,12 +341,14 @@ def download_dataset(
     """
     full_config = load_full_config()
     if config is not None:
-        full_config["dataset"] = {**full_config["dataset"], **config}
+        full_config["dataset"] = cast(
+            DatasetConfig, {**full_config["dataset"], **config}
+        )
     dataset_cfg = full_config["dataset"]
     selected = _normalize_targets(targets)
 
     revision = HfApi().dataset_info(dataset_cfg["hf_repo_id"]).sha
-    results: dict = {
+    results: dict[str, object] = {
         "revision": revision,
         "hf_repo_id": dataset_cfg["hf_repo_id"],
     }

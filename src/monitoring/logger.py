@@ -6,7 +6,7 @@ import json
 import logging
 from datetime import UTC, datetime
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 def log_prediction(

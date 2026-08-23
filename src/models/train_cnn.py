@@ -5,13 +5,17 @@ from __future__ import annotations
 import logging
 import math
 from pathlib import Path
+from typing import cast
 
 import mlflow
 import mlflow.pytorch
 import numpy as np
 import optuna
+import pandas as pd
 import torch
 
+from src.artifact_types import DatasetLineage, FoldMetricRow, TrainResult
+from src.config_types import TrainingConfig
 from src.models.cnn_model import (
     ensure_resnet18_weights,
     suggest_cnn_params,
@@ -42,10 +46,12 @@ from src.models.mlflow_logging import (
     save_json,
 )
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
-def _xy_mels(frame, label_to_id: dict[str, int]):
+def _xy_mels(
+    frame: pd.DataFrame, label_to_id: dict[str, int]
+) -> tuple[np.ndarray, np.ndarray]:
     y = encode_labels(frame["class"], label_to_id)
     x = mels_array(frame)
     return x, y
@@ -53,12 +59,12 @@ def _xy_mels(frame, label_to_id: dict[str, int]):
 
 def train_resnet_model(
     *,
-    train_cfg: dict,
-    mels_df,
+    train_cfg: TrainingConfig | dict[str, object],
+    mels_df: pd.DataFrame,
     n_trials: int,
     seed: int,
-    lineage: dict,
-) -> dict:
+    lineage: DatasetLineage,
+) -> TrainResult:
     train_folds = list(train_cfg["train_folds"])
     val_fold = int(train_cfg["val_fold"])
     eval_fold = int(train_cfg["eval_fold"])
@@ -219,7 +225,7 @@ def train_resnet_model(
             n_folds = int(cv_cfg.get("n_folds", 10))
             cv_label_to_id, _ = build_label_maps(mels_df["class"])
             cv_n_classes = len(cv_label_to_id)
-            fold_rows: list[dict] = []
+            fold_rows: list[FoldMetricRow] = []
             logger.info("Running UrbanSound8K %s-fold eval CV for resnet18", n_folds)
             for test_fold, cv_train_folds in iter_us8k_cv_folds(n_folds):
                 train_df = filter_split(mels_df, cv_train_folds, include_augmented=True)
@@ -254,7 +260,9 @@ def train_resnet_model(
                     y_proba=proba_cv,
                     labels=list(range(cv_n_classes)),
                 )
-                fold_rows.append({"fold": int(test_fold), **fold_metrics})
+                fold_rows.append(
+                    cast(FoldMetricRow, {"fold": int(test_fold), **fold_metrics})
+                )
             aggregate = aggregate_fold_metrics(fold_rows)
             metrics.update(aggregate)
             log_cv_results(fold_rows, aggregate, out_dir)

@@ -6,11 +6,14 @@ import argparse
 import json
 import logging
 import warnings
+from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
-import yaml
 
+from src.config import load_app_config
+from src.config_types import AppConfig, DriftMonitoringConfig
 from src.data_pipeline.audio_features import tabular_feature_names
 from src.models.runtime_env import ROOT
 from src.monitoring.drift_detector import (
@@ -33,20 +36,19 @@ METADATA_FILENAME = "metadata.parquet"
 DEFAULT_CONFIG = ROOT / "config" / "config.yaml"
 
 
-def _load_config(path: Path) -> dict:
-    with open(path) as handle:
-        loaded = yaml.safe_load(handle)
-    if not isinstance(loaded, dict):
-        raise TypeError(f"invalid config: {path}")
-    return loaded
+def _load_config(path: Path) -> AppConfig:
+    return load_app_config(path)
 
 
-def _drift_cfg(config: dict) -> dict:
-    return (config.get("monitoring") or {}).get("drift") or {}
+def _drift_cfg(config: AppConfig) -> DriftMonitoringConfig | dict[str, object]:
+    monitoring = config.get("monitoring") or {}
+    return cast(
+        DriftMonitoringConfig | dict[str, object], monitoring.get("drift") or {}
+    )
 
 
 def resolve_reference_path(
-    config: dict,
+    config: AppConfig,
     *,
     models_root: Path | None = None,
     explicit: Path | None = None,
@@ -64,19 +66,19 @@ def resolve_reference_path(
     return ROOT / raw
 
 
-def _processed_dir(config: dict) -> Path:
+def _processed_dir(config: AppConfig) -> Path:
     path = Path(config.get("spark", {}).get("local_processed_dir", "data/processed"))
     return path if path.is_absolute() else ROOT / path
 
 
-def _interim_dir(config: dict) -> Path:
+def _interim_dir(config: AppConfig) -> Path:
     path = Path(
         config.get("preprocessing", {}).get("local_interim_dir", "data/interim")
     )
     return path if path.is_absolute() else ROOT / path
 
 
-def _eval_fold(config: dict) -> int:
+def _eval_fold(config: AppConfig) -> int:
     return int(config.get("training", {}).get("eval_fold", 10))
 
 
@@ -89,7 +91,7 @@ def _fold_labels(frame: pd.DataFrame, fold: int) -> pd.DataFrame:
     return subset.reset_index(drop=True)
 
 
-def _load_fold10_frame(config: dict) -> tuple[pd.DataFrame | None, str]:
+def _load_fold10_frame(config: AppConfig) -> tuple[pd.DataFrame | None, str]:
     fold = _eval_fold(config)
     processed = _processed_dir(config) / TABULAR_FILENAME
     if processed.is_file():
@@ -104,7 +106,7 @@ def _load_fold10_frame(config: dict) -> tuple[pd.DataFrame | None, str]:
     return None, "official_urbansound8k_fold10"
 
 
-def _winner_meta(config: dict) -> dict:
+def _winner_meta(config: AppConfig) -> dict[str, object]:
     models_dir = Path(config.get("training", {}).get("models_dir", "models"))
     if not models_dir.is_absolute():
         models_dir = ROOT / models_dir
@@ -115,7 +117,7 @@ def _winner_meta(config: dict) -> dict:
         payload = json.load(handle)
     if not isinstance(payload, dict):
         return {}
-    dataset = payload.get("dataset") or {}
+    dataset = cast(dict[str, object], payload.get("dataset") or {})
     return {
         "dataset_id": dataset.get("hf_repo_id")
         or config.get("dataset", {}).get("hf_repo_id"),
@@ -152,7 +154,7 @@ def _read_confidence_file(path: Path) -> list[float]:
 
 
 def build_reference(
-    config: dict,
+    config: AppConfig,
     *,
     with_features: bool = False,
     confidence_path: Path | None = None,
@@ -215,7 +217,7 @@ def build_reference(
     return reference
 
 
-def _iter_prediction_records(path: Path):
+def _iter_prediction_records(path: Path) -> Iterator[tuple[str, float]]:
     with open(path) as handle:
         for line_no, line in enumerate(handle, start=1):
             line = line.strip()
@@ -237,7 +239,7 @@ def _iter_prediction_records(path: Path):
             yield str(label), float(record.get("confidence") or 0.0)
 
 
-def fold10_prediction_labels(config: dict) -> list[str]:
+def fold10_prediction_labels(config: AppConfig) -> list[str]:
     frame, _source = _load_fold10_frame(config)
     if frame is not None:
         return frame["class"].astype(str).tolist()
@@ -247,7 +249,7 @@ def fold10_prediction_labels(config: dict) -> list[str]:
     return labels
 
 
-def write_fold10_prediction_log(path: Path, config: dict) -> int:
+def write_fold10_prediction_log(path: Path, config: AppConfig) -> int:
     """Write a synthetic JSONL of fold-10 labels so score-predictions can run."""
     labels = fold10_prediction_labels(config)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -268,7 +270,7 @@ def write_fold10_prediction_log(path: Path, config: dict) -> int:
     return len(labels)
 
 
-def ensure_prediction_jsonl(path: Path, config: dict) -> Path:
+def ensure_prediction_jsonl(path: Path, config: AppConfig) -> Path:
     if path.is_file():
         return path
     n_rows = write_fold10_prediction_log(path, config)
@@ -314,7 +316,7 @@ def score_feature_file(path: Path, reference: DriftReference, n_mfcc: int) -> di
     )
 
 
-def _print_json(payload: dict) -> None:
+def _print_json(payload: dict[str, object]) -> None:
     print(json.dumps(payload, indent=2))
 
 

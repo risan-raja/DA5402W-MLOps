@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any
 
 import mlflow
 import numpy as np
 
+from src.artifact_types import FoldMetricRow
 from src.models.mlflow_logging import save_json
 
 # Metrics aggregated across folds (subset of compute_metrics keys).
@@ -24,7 +24,7 @@ _AGG_KEYS = (
 )
 
 
-def aggregate_fold_metrics(fold_metrics: list[dict[str, Any]]) -> dict[str, float]:
+def aggregate_fold_metrics(fold_metrics: list[FoldMetricRow]) -> dict[str, float]:
     """Compute ``cv_{metric}_mean`` / ``cv_{metric}_std`` over fold metric dicts."""
     if not fold_metrics:
         raise ValueError("fold_metrics must be non-empty")
@@ -47,7 +47,7 @@ def aggregate_fold_metrics(fold_metrics: list[dict[str, Any]]) -> dict[str, floa
 
 
 def log_cv_results(
-    fold_rows: list[dict[str, Any]],
+    fold_rows: list[FoldMetricRow],
     aggregate: dict[str, float],
     out_dir: Path | str,
 ) -> Path:

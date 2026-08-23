@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import io
 from pathlib import Path
 
@@ -29,7 +31,7 @@ def _wav_bytes(y: np.ndarray, sr: int) -> bytes:
     return buf.getvalue()
 
 
-def test_clean_clip_mono_resample_and_peak_norm():
+def test_clean_clip_mono_resample_and_peak_norm() -> None:
     y = np.stack([_sine(), _sine(freq=880.0)], axis=1)  # stereo (n, 2)
     cleaned, sr = clean_clip(y, 22050, target_sr=16000)
     assert cleaned.ndim == 1
@@ -38,14 +40,14 @@ def test_clean_clip_mono_resample_and_peak_norm():
     assert pytest.approx(float(np.max(np.abs(cleaned))), abs=1e-5) == 1.0
 
 
-def test_clean_clip_rejects_empty_and_silent():
+def test_clean_clip_rejects_empty_and_silent() -> None:
     with pytest.raises(ValueError, match="empty audio"):
         clean_clip(np.array([], dtype=np.float32), 16000)
     with pytest.raises(ValueError, match="silent audio"):
         clean_clip(np.zeros(1000, dtype=np.float32), 16000)
 
 
-def test_decode_audio_bytes_roundtrip():
+def test_decode_audio_bytes_roundtrip() -> None:
     raw = _sine(sr=16000)
     y, sr = decode_audio_bytes(_wav_bytes(raw, 16000))
     assert sr == 16000
@@ -53,7 +55,7 @@ def test_decode_audio_bytes_roundtrip():
     assert len(y) == len(raw)
 
 
-def test_augment_waveform_is_seeded_and_changes_signal():
+def test_augment_waveform_is_seeded_and_changes_signal() -> None:
     y = _sine(sr=16000)
     pipeline = build_augmentations(
         gaussian_noise_p=1.0,
@@ -74,7 +76,7 @@ def test_augment_waveform_is_seeded_and_changes_signal():
     assert not np.allclose(a, c)
 
 
-def test_fold_split_default_eval_fold_excludes_augmented_eval():
+def test_fold_split_default_eval_fold_excludes_augmented_eval() -> None:
     frame = pd.DataFrame(
         {
             "fold": [1, 1, 10, 10],
@@ -89,7 +91,7 @@ def test_fold_split_default_eval_fold_excludes_augmented_eval():
     assert list(eval_df["is_augmented"]) == [False]
 
 
-def test_class_counts():
+def test_class_counts() -> None:
     frame = pd.DataFrame({"class": ["dog_bark", "siren", "dog_bark"]})
     assert class_counts(frame) == {"dog_bark": 2, "siren": 1}
 
@@ -143,7 +145,7 @@ def _write_fake_raw(raw_dir: Path, n: int = 4) -> None:
     pq.write_table(table, data_dir / "train-00000.parquet")
 
 
-def test_process_raw_to_interim(tmp_path):
+def test_process_raw_to_interim(tmp_path: Path) -> None:
     raw_dir = tmp_path / "raw"
     interim_dir = tmp_path / "interim"
     _write_fake_raw(raw_dir, n=4)

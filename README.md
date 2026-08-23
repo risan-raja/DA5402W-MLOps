@@ -169,6 +169,14 @@ uv run pytest -q -m "not integration"
 uv run ruff check .
 ```
 
+**Type checking:**
+
+```bash
+make typecheck          # pyrefly check (src, tests, airflow/dags)
+make type-coverage      # check + coverage report + ≥95% gate
+# or: bash scripts/verify_type_coverage.sh
+```
+
 ## 5. API usage
 
 With Compose running, the API is at `http://localhost:8000`:

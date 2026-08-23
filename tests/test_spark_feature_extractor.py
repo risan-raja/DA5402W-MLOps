@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 import numpy as np
@@ -21,7 +23,7 @@ def _sine(sr: int = 16000, seconds: float = 4.0) -> np.ndarray:
     return (0.25 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
 
 
-def test_tabular_feature_names_count():
+def test_tabular_feature_names_count() -> None:
     names = tabular_feature_names(n_mfcc=13)
     # 13*4 mfcc(+delta) + 12*2 chroma + 4*2 spectral/zcr
     assert len(names) == 13 * 4 + 12 * 2 + 4 * 2
@@ -29,7 +31,7 @@ def test_tabular_feature_names_count():
     assert "zcr_std" in names
 
 
-def test_pad_or_truncate_and_mel_shape():
+def test_pad_or_truncate_and_mel_shape() -> None:
     short = _sine(seconds=0.5)
     padded = pad_or_truncate(short, 16000, 4.0)
     assert len(padded) == 64000
@@ -44,7 +46,7 @@ def test_pad_or_truncate_and_mel_shape():
     assert mel.shape == (128, 126)
 
 
-def test_extract_tabular_features_keys():
+def test_extract_tabular_features_keys() -> None:
     y = pad_or_truncate(_sine(), 16000, 4.0)
     feats = extract_tabular_features(y, 16000, n_mfcc=13)
     names = tabular_feature_names(13)
@@ -52,7 +54,7 @@ def test_extract_tabular_features_keys():
     assert all(np.isfinite(v) for v in feats.values())
 
 
-def test_extract_clip_features(tmp_path):
+def test_extract_clip_features(tmp_path: Path) -> None:
     wav = tmp_path / "clip.wav"
     sf.write(wav, _sine(), 16000)
     spark_cfg = {
@@ -108,7 +110,7 @@ def _write_mini_interim(interim_dir: Path, n: int = 2) -> None:
     pd.DataFrame(rows).to_parquet(interim_dir / "metadata.parquet", index=False)
 
 
-def test_extract_features_spark_end_to_end(tmp_path):
+def test_extract_features_spark_end_to_end(tmp_path: Path) -> None:
     interim_dir = tmp_path / "interim"
     processed_dir = tmp_path / "processed"
     _write_mini_interim(interim_dir, n=2)

@@ -16,19 +16,26 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import yaml
 from huggingface_hub import HfApi, snapshot_download, upload_file, upload_folder
 
-logger = logging.getLogger(__name__)
+from src.config import (
+    DEFAULT_CONFIG_PATH,
+    load_app_config,
+)
+from src.config import (
+    load_versioning_config as _load_versioning_config,
+)
+from src.config_types import AppConfig, VersioningConfig
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = ROOT / "config" / "config.yaml"
+CONFIG_PATH = DEFAULT_CONFIG_PATH
 TRAINED_MODEL_DIRS = ("rf", "xgboost", "lightgbm", "resnet18")
 
 
-def load_full_config(config_path: Path = CONFIG_PATH) -> dict:
-    with open(config_path) as f:
-        return yaml.safe_load(f)
+def load_full_config(config_path: Path = CONFIG_PATH) -> AppConfig:
+    return load_app_config(config_path)
 
 
 def resolve_dataset_repo_id(config_path: Path = CONFIG_PATH) -> tuple[str, str]:
@@ -38,9 +45,8 @@ def resolve_dataset_repo_id(config_path: Path = CONFIG_PATH) -> tuple[str, str]:
     return dataset["hf_repo_id"], dataset.get("hf_repo_type", "dataset")
 
 
-def load_versioning_config(config_path: Path = CONFIG_PATH) -> dict:
-    return load_full_config(config_path)["versioning"]
-
+def load_versioning_config(config_path: Path = CONFIG_PATH) -> VersioningConfig:
+    return _load_versioning_config(config_path)
 
 def versioning_push_enabled(key: str, config_path: Path = CONFIG_PATH) -> bool:
     return bool(load_versioning_config(config_path).get(key, False))

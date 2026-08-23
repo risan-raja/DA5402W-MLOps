@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import io
 from pathlib import Path
 
@@ -58,7 +60,7 @@ def _write_tabular_winner(models_dir: Path) -> None:
 
 
 @pytest.fixture
-def isolated_env(tmp_path, monkeypatch):
+def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DA5402W_CONFIG", str(REPO_CONFIG))
     monkeypatch.setenv("DA5402W_MODELS_DIR", str(tmp_path / "models"))
     monkeypatch.setenv("DA5402W_MODEL_CACHE", str(tmp_path / "cache"))
@@ -67,7 +69,7 @@ def isolated_env(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_health_ok_without_model(isolated_env):
+def test_health_ok_without_model(isolated_env: Path) -> None:
     with TestClient(app) as client:
         response = client.get("/health")
         missing = client.get("/")
@@ -79,7 +81,7 @@ def test_health_ok_without_model(isolated_env):
     assert "predict_requests_total" in metrics.text
 
 
-def test_predict_503_without_model(isolated_env):
+def test_predict_503_without_model(isolated_env: Path) -> None:
     with TestClient(app) as client:
         response = client.post(
             "/predict",
@@ -88,7 +90,7 @@ def test_predict_503_without_model(isolated_env):
     assert response.status_code == 503
 
 
-def test_predict_rejects_non_wav(isolated_env):
+def test_predict_rejects_non_wav(isolated_env: Path) -> None:
     with TestClient(app) as client:
         response = client.post(
             "/predict",
@@ -98,7 +100,7 @@ def test_predict_rejects_non_wav(isolated_env):
     assert "wav" in response.json()["detail"].lower()
 
 
-def test_predict_rejects_oversize(isolated_env):
+def test_predict_rejects_oversize(isolated_env: Path) -> None:
     payload = b"RIFF" + b"\x00" * (8 * 1024 * 1024)
     with TestClient(app) as client:
         response = client.post(
@@ -108,7 +110,7 @@ def test_predict_rejects_oversize(isolated_env):
     assert response.status_code == 413
 
 
-def test_predict_tabular_winner_contract(isolated_env):
+def test_predict_tabular_winner_contract(isolated_env: Path) -> None:
     _write_tabular_winner(isolated_env / "models")
     with TestClient(app) as client:
         response = client.post(

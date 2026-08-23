@@ -7,15 +7,17 @@ from src.models.runtime_env import load_runtime_env
 load_runtime_env()
 
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import perf_counter
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.responses import Response
 
+from src.config_types import AppConfig
 from src.deployment.infer import predict_clip
 from src.deployment.metrics import (
     DRIFT_KS_CONFIDENCE,
@@ -31,13 +33,15 @@ from src.deployment.runtime import ServingState, load_serving_state
 from src.deployment.schemas import HealthResponse, PredictResponse
 from src.monitoring.logger import log_prediction
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 WAV_SUFFIXES = {".wav"}
 WAV_MIMES = {"audio/wav", "audio/x-wav", "audio/wave"}
 
-_STATE = ServingState(model=None, config={}, models_dir=Path("models"))
+_STATE = ServingState(
+    model=None, config=cast(AppConfig, {}), models_dir=Path("models")
+)
 
 
 def current_state() -> ServingState:
@@ -50,12 +54,12 @@ def set_state(state: ServingState) -> None:
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     set_state(load_serving_state())
     yield
 
 
-app = FastAPI(title="da5402w", lifespan=lifespan)
+app: FastAPI = FastAPI(title="da5402w", lifespan=lifespan)
 
 
 def _observe_drift(state: ServingState, label: str, confidence: float) -> None:

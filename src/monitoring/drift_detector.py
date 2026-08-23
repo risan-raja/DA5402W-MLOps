@@ -410,8 +410,8 @@ class DriftMonitor:
     def __init__(self, window_size: int, reference: DriftReference) -> None:
         if window_size < 1:
             raise ValueError("window_size must be >= 1")
-        self.window_size = window_size
-        self.reference = reference
+        self.window_size: int = window_size
+        self.reference: DriftReference = reference
         self._labels: deque[str] = deque(maxlen=window_size)
         self._confidences: deque[float] = deque(maxlen=window_size)
 

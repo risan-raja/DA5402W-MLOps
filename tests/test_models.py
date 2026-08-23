@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import math
 import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 import torch.nn.functional as F
 
@@ -66,7 +68,7 @@ def _synthetic_tabular(n_per_fold: int = 4) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def test_filter_split_excludes_augments_on_val_eval():
+def test_filter_split_excludes_augments_on_val_eval() -> None:
     frame = _synthetic_tabular()
     val = filter_split(frame, [9], include_augmented=False)
     assert val["is_augmented"].astype(bool).sum() == 0
@@ -76,7 +78,7 @@ def test_filter_split_excludes_augments_on_val_eval():
     assert train["is_augmented"].astype(bool).sum() > 0
 
 
-def test_split_frames_shapes():
+def test_split_frames_shapes() -> None:
     frame = _synthetic_tabular()
     optuna_train, val, refit, eval_df = split_frames(frame, list(range(1, 9)), 9, 10)
     assert set(optuna_train["fold"].unique()) <= set(range(1, 9))
@@ -86,7 +88,7 @@ def test_split_frames_shapes():
     assert 9 in set(refit["fold"].unique())
 
 
-def test_scaler_fit_on_train_only():
+def test_scaler_fit_on_train_only() -> None:
     frame = _synthetic_tabular()
     optuna_train, val, _, _ = split_frames(frame, list(range(1, 9)), 9, 10)
     label_to_id, _ = build_label_maps(optuna_train["class"])
@@ -104,7 +106,7 @@ def test_scaler_fit_on_train_only():
     assert sw.shape == y_tr.shape
 
 
-def test_mel_stats_and_normalize():
+def test_mel_stats_and_normalize() -> None:
     mels = np.random.randn(8, 128, 126).astype(np.float32)
     stats = fit_mel_stats(mels)
     normed = normalize_mels(mels, stats)
@@ -112,7 +114,7 @@ def test_mel_stats_and_normalize():
     assert abs(float(np.std(normed)) - 1.0) < 1e-3
 
 
-def test_mel_to_3ch_and_resnet_forward():
+def test_mel_to_3ch_and_resnet_forward() -> None:
     mel = np.random.randn(128, 126).astype(np.float32)
     stacked = mel_to_3ch(mel)
     assert stacked.shape == (3, 128, 126)
@@ -125,7 +127,7 @@ def test_mel_to_3ch_and_resnet_forward():
     assert logits.shape == (1, 10)
 
 
-def test_collect_dataset_lineage_reads_manifests(tmp_path):
+def test_collect_dataset_lineage_reads_manifests(tmp_path: Path) -> None:
     from src.models.data import collect_dataset_lineage
 
     processed = tmp_path / "processed"
@@ -141,7 +143,7 @@ def test_collect_dataset_lineage_reads_manifests(tmp_path):
     assert lineage["tabular"]["sha256"]
 
 
-def test_compute_metrics_keys():
+def test_compute_metrics_keys() -> None:
     y_true = np.array([0, 1, 2, 0, 1, 2])
     y_pred = np.array([0, 1, 1, 0, 2, 2])
     proba = np.eye(3)[y_pred]
@@ -157,7 +159,7 @@ def test_compute_metrics_keys():
         assert key in metrics
 
 
-def test_load_runtime_env_sets_thread_defaults(tmp_path, monkeypatch):
+def test_load_runtime_env_sets_thread_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text("OMP_NUM_THREADS=2\n")
     for key in _THREAD_DEFAULTS:
@@ -170,7 +172,7 @@ def test_load_runtime_env_sets_thread_defaults(tmp_path, monkeypatch):
         assert os.environ.get(key) == value
 
 
-def test_register_dataset_input_retries_unique_then_succeeds(monkeypatch):
+def test_register_dataset_input_retries_unique_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     from mlflow.exceptions import MlflowException
 
     from src.models.mlflow_logging import register_dataset_input
@@ -191,7 +193,7 @@ def test_register_dataset_input_retries_unique_then_succeeds(monkeypatch):
     assert calls["n"] == 3
 
 
-def test_register_dataset_input_continues_after_persistent_unique(monkeypatch):
+def test_register_dataset_input_continues_after_persistent_unique(monkeypatch: pytest.MonkeyPatch) -> None:
     from mlflow.exceptions import MlflowException
 
     from src.models.mlflow_logging import register_dataset_input
@@ -208,13 +210,13 @@ def test_register_dataset_input_continues_after_persistent_unique(monkeypatch):
     assert calls["n"] == 2
 
 
-def test_result_score_prefers_cv_mean():
+def test_result_score_prefers_cv_mean() -> None:
     assert result_score({"metrics": {"f1_macro": 0.9, "cv_f1_macro_mean": 0.5}}) == 0.5
     assert result_score({"metrics": {"f1_macro": 0.8}}) == 0.8
     assert result_score({"metrics": {}}) == float("-inf")
 
 
-def test_winner_payload_includes_cv_and_lineage():
+def test_winner_payload_includes_cv_and_lineage() -> None:
     payload = winner_payload(
         {
             "model_name": "xgboost",
@@ -236,7 +238,7 @@ def test_winner_payload_includes_cv_and_lineage():
     assert payload["dataset"]["tabular_sha256"] == "deadbeef"
 
 
-def test_select_winner_writes_json_and_copies_dir(tmp_path, monkeypatch):
+def test_select_winner_writes_json_and_copies_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.models.train.tag_mlflow_winners", lambda *a, **k: None)
     (tmp_path / "rf").mkdir()
     (tmp_path / "rf" / "model.joblib").write_text("rf-weights")
@@ -271,7 +273,7 @@ def test_select_winner_writes_json_and_copies_dir(tmp_path, monkeypatch):
     assert (dest / "model.joblib").read_text() == "rf-weights"
 
 
-def test_select_winner_from_artifacts(tmp_path, monkeypatch):
+def test_select_winner_from_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.models.train.tag_mlflow_winners", lambda *a, **k: None)
     monkeypatch.setattr("src.models.train.ensure_mlflow", lambda cfg: None)
     models_dir = tmp_path / "models"
@@ -308,7 +310,7 @@ def test_select_winner_from_artifacts(tmp_path, monkeypatch):
     assert (models_dir / "winner.json").is_file()
 
 
-def test_train_resnet_history_has_val_metrics():
+def test_train_resnet_history_has_val_metrics() -> None:
     """Optuna trials log these keys; history must return finite values."""
     from src.models.cnn_model import train_resnet
 
@@ -339,7 +341,7 @@ def test_train_resnet_history_has_val_metrics():
         assert not math.isnan(value)
         assert 0.0 <= value <= 1.0
 
-def test_iter_us8k_cv_folds_disjoint():
+def test_iter_us8k_cv_folds_disjoint() -> None:
     pairs = list(iter_us8k_cv_folds(10))
     assert len(pairs) == 10
     for test_fold, train_folds in pairs:
@@ -348,7 +350,7 @@ def test_iter_us8k_cv_folds_disjoint():
         assert set(train_folds) | {test_fold} == set(range(1, 11))
 
 
-def test_aggregate_fold_metrics_mean_std():
+def test_aggregate_fold_metrics_mean_std() -> None:
     folds = [
         {"fold": 1, "f1_macro": 0.5, "accuracy": 0.6},
         {"fold": 2, "f1_macro": 0.7, "accuracy": 0.8},

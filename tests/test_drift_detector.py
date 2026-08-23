@@ -37,30 +37,30 @@ from tests.test_api import _wav_bytes, _write_tabular_winner
 REPO_CONFIG = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
 
 
-def test_psi_zero_when_distributions_match():
+def test_psi_zero_when_distributions_match() -> None:
     prior = proportions_from_counts(OFFICIAL_FOLD10_COUNTS, CLASS_NAMES)
     assert population_stability_index(prior, prior) == pytest.approx(0.0, abs=1e-12)
 
 
-def test_psi_rises_when_one_class_dominates():
+def test_psi_rises_when_one_class_dominates() -> None:
     prior = proportions_from_counts(OFFICIAL_FOLD10_COUNTS, CLASS_NAMES)
     skewed = {name: (1.0 if name == "siren" else 0.0) for name in CLASS_NAMES}
     assert population_stability_index(prior, skewed) > 1.0
 
 
-def test_ks_zero_for_identical_samples():
+def test_ks_zero_for_identical_samples() -> None:
     samples = [0.1, 0.4, 0.7, 0.9, 0.95]
     assert ks_statistic(samples, samples) == pytest.approx(0.0)
 
 
-def test_ks_larger_for_shifted_confidences():
+def test_ks_larger_for_shifted_confidences() -> None:
     rng = np.random.default_rng(0)
     ref = rng.beta(8, 2, size=200)
     live = rng.beta(2, 8, size=200)
     assert ks_statistic(ref, live) > 0.4
 
 
-def test_monitor_none_until_window_full():
+def test_monitor_none_until_window_full() -> None:
     reference = official_fold10_reference()
     monitor = DriftMonitor(window_size=3, reference=reference)
     assert monitor.update("dog_bark", 0.9) is None
@@ -73,7 +73,7 @@ def test_monitor_none_until_window_full():
     assert snapshot.ks_confidence is None
 
 
-def test_monitor_confidence_ks_when_quantiles_present():
+def test_monitor_confidence_ks_when_quantiles_present() -> None:
     reference = with_confidence_samples(
         official_fold10_reference(),
         [0.9, 0.92, 0.88, 0.95, 0.91],
@@ -86,7 +86,7 @@ def test_monitor_confidence_ks_when_quantiles_present():
     assert snapshot.ks_confidence > 0.5
 
 
-def test_score_predictions_batch():
+def test_score_predictions_batch() -> None:
     reference = official_fold10_reference()
     labels = ["dog_bark"] * 50 + ["siren"] * 50
     snapshot = score_predictions(labels, [0.8] * 100, reference)
@@ -94,7 +94,7 @@ def test_score_predictions_batch():
     assert snapshot.psi_class > 0.5
 
 
-def test_feature_psi_near_zero_on_same_draw():
+def test_feature_psi_near_zero_on_same_draw() -> None:
     rng = np.random.default_rng(1)
     values = rng.normal(size=400)
     histograms = build_feature_histograms({"mfcc_0_mean": values}, n_bins=8)
@@ -103,7 +103,7 @@ def test_feature_psi_near_zero_on_same_draw():
     assert scored["max_psi_feature"] == "mfcc_0_mean"
 
 
-def test_cli_build_reference_from_processed(tmp_path):
+def test_cli_build_reference_from_processed(tmp_path: Path) -> None:
     frame = pd.DataFrame(
         {
             "fold": [10, 10, 9, 10],
@@ -132,7 +132,7 @@ def test_cli_build_reference_from_processed(tmp_path):
     assert loaded.class_counts["dog_bark"] == 1
 
 
-def test_cli_score_predictions_jsonl(tmp_path):
+def test_cli_score_predictions_jsonl(tmp_path: Path) -> None:
     reference = official_fold10_reference()
     ref_path = tmp_path / "ref.json"
     dump_reference(ref_path, reference)
@@ -154,7 +154,7 @@ def test_cli_score_predictions_jsonl(tmp_path):
     assert scored["ks_confidence"] is None
 
 
-def test_cli_writes_missing_prediction_jsonl(tmp_path):
+def test_cli_writes_missing_prediction_jsonl(tmp_path: Path) -> None:
     config = {
         "dataset": {"hf_repo_id": "test/repo"},
         "training": {"eval_fold": 10, "models_dir": str(tmp_path / "models")},
@@ -172,7 +172,7 @@ def test_cli_writes_missing_prediction_jsonl(tmp_path):
     assert scored["psi_class"] == pytest.approx(0.0, abs=1e-12)
 
 
-def test_cli_score_features(tmp_path):
+def test_cli_score_features(tmp_path: Path) -> None:
     rng = np.random.default_rng(2)
     ref_values = rng.normal(loc=0.0, scale=1.0, size=200)
     live_values = rng.normal(loc=3.0, scale=1.0, size=80)
@@ -187,7 +187,7 @@ def test_cli_score_features(tmp_path):
     assert float(scored["mean_psi"]) > 0.2
 
 
-def test_cli_score_features_accepts_with_features(tmp_path, capsys):
+def test_cli_score_features_accepts_with_features(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     rng = np.random.default_rng(3)
     frame = pd.DataFrame(
         {
@@ -243,7 +243,7 @@ def test_cli_score_features_accepts_with_features(tmp_path, capsys):
     assert loaded.has_features
 
 
-def test_predict_updates_drift_gauges(tmp_path, monkeypatch):
+def test_predict_updates_drift_gauges(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DA5402W_CONFIG", str(REPO_CONFIG))
     monkeypatch.setenv("DA5402W_MODELS_DIR", str(tmp_path / "models"))
     monkeypatch.setenv("DA5402W_MODEL_CACHE", str(tmp_path / "cache"))

@@ -11,6 +11,7 @@ from pathlib import Path
 import certifi
 import librosa
 import numpy as np
+import optuna
 import torch
 import torch.nn as nn  # noqa: PLR0402
 import torch.nn.functional as F
@@ -18,7 +19,9 @@ from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.data import DataLoader, Dataset
 from torchvision.models import ResNet18_Weights, resnet18
 
-logger = logging.getLogger(__name__)
+from src.artifact_types import CnnHistory, CnnSuggestParams
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 def resolve_device() -> torch.device:
@@ -87,14 +90,14 @@ def build_resnet18(n_classes: int = 10, pretrained: bool = True) -> nn.Module:
 
 
 class MelDataset(Dataset):
-    def __init__(self, mels: np.ndarray, labels: np.ndarray):
-        self.mels = mels
-        self.labels = labels.astype(np.int64)
+    def __init__(self, mels: np.ndarray, labels: np.ndarray) -> None:
+        self.mels: np.ndarray = mels
+        self.labels: np.ndarray = labels.astype(np.int64)
 
     def __len__(self) -> int:
         return len(self.labels)
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         x = torch.from_numpy(mel_to_3ch(self.mels[idx]))
         y = torch.tensor(self.labels[idx], dtype=torch.long)
         return x, y
@@ -145,7 +148,7 @@ def train_resnet(
     pretrained: bool = True,
     device: torch.device | None = None,
     early_stop: bool = True,
-) -> tuple[nn.Module, dict[str, float]]:
+) -> tuple[nn.Module, CnnHistory]:
     device = device or resolve_device()
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -165,7 +168,7 @@ def train_resnet(
     best_state = copy.deepcopy(model.state_dict())
     best_f1 = -1.0
     stale = 0
-    history = {
+    history: CnnHistory = {
         "best_val_f1_macro": 0.0,
         "best_val_accuracy": float("nan"),
         "best_val_f1_weighted": float("nan"),
@@ -218,7 +221,7 @@ def train_resnet(
     return model, history
 
 
-def suggest_cnn_params(trial, seed: int = 42) -> dict:
+def suggest_cnn_params(trial: optuna.Trial, seed: int = 42) -> CnnSuggestParams:
     return {
         "lr": trial.suggest_float("lr", 1e-5, 3e-4, log=True),
         "batch_size": trial.suggest_categorical("batch_size", [16, 32]),
