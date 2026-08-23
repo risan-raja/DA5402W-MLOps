@@ -1,188 +1,243 @@
 # DA5402W — Audio Classification MLOps Pipeline
 
-End-to-end MLOps pipeline for classifying urban sounds, built for the DA5402W course end-term project. It takes raw `.wav` clips from UrbanSound8K, extracts features with PySpark, trains and compares four models, tracks runs in MLflow, serves the best one through FastAPI, and monitors it with Prometheus and drift detection.
+End-to-end MLOps pipeline for classifying urban sounds (UrbanSound8K): PySpark feature extraction, four Optuna-tuned models with MLflow tracking, FastAPI serving, host Airflow orchestration, and Prometheus / Grafana / drift monitoring.
 
-**Status**: architecture finalized, implementation in progress. See `docs/DESIGN.md` for the design record and why each tool was chosen.
+Design decisions and rationale: [`docs/DESIGN.md`](docs/DESIGN.md).
 
-## Overview
+## 1. Project overview
 
-UrbanSound8K has 8,732 labeled clips across 10 classes: air conditioners, car horns, kids playing, dog barks, drilling, engine idling, gunshots, jackhammers, sirens, and street music. The pipeline:
+UrbanSound8K has 8,732 labeled clips across 10 classes (air conditioner, car horn, children playing, dog bark, drilling, engine idling, gun shot, jackhammer, siren, street music). This repo:
 
-1. Fetches the dataset from [`risan-raja-iitm/urbansound8K`](https://huggingface.co/datasets/risan-raja-iitm/urbansound8K) on Hugging Face Hub (a clone of `danavery/urbansound8K`, already in parquet — no Kaggle credentials needed).
-2. Extracts MFCCs, spectral centroid, zero-crossing rate, and chroma features in parallel with PySpark UDFs on the host, splitting train/eval by the dataset's `fold` column per UrbanSound8K's standard protocol.
-3. Trains and compares four models (XGBoost, LightGBM, Random Forest on the tabular features, and a CNN on mel-spectrograms), tuning each with Optuna and logging each run to MLflow.
-4. Serves the winning model through FastAPI, containerized with Docker.
-5. Runs ingestion through training as one Airflow DAG.
-6. Monitors the live API with Prometheus, Grafana, JSON prediction logs, and a KS/PSI drift detector on incoming predictions.
+1. Fetches data from [`risan-raja-iitm/urbansound8K`](https://huggingface.co/datasets/risan-raja-iitm/urbansound8K) on Hugging Face Hub (parquet; no Kaggle credentials).
+2. Extracts tabular audio features with PySpark UDFs on the host; train/eval splits follow the dataset `fold` column (1–10).
+3. Trains and compares four models — XGBoost, LightGBM, Random Forest, and a ResNet-18 CNN on mel-spectrograms — with Optuna and MLflow.
+4. Serves the winner via FastAPI (`/health`, `/metrics`, `/predict`) in Docker Compose.
+5. Orchestrates ingestion through training with an Airflow DAG on the **host** (LocalExecutor).
+6. Monitors the live API with Prometheus, Grafana, JSON prediction logs, and KS/PSI drift detection.
 
-## System architecture
+Dataset and model versioning use Hugging Face Hub (same dataset repo for `interim`/`processed`; separate model repo for artifacts). DVC remains a documented secondary path.
 
-```
-┌─────────────┐     ┌──────────────┐     ┌───────────────────┐     ┌─────────────┐
-│  HF Hub     │────▶│   Airflow    │────▶│  PySpark (local    │────▶│   MLflow    │
-│  dataset    │     │  DAG (host   │     │  mode, host venv)  │     │  (SQLite +  │
-│  repo       │     │  LocalExec)  │     │  feature extraction │     │  Registry)  │
-└─────────────┘     └──────┬───────┘     └───────────────────┘     └──────┬──────┘
-                           │                                              │
-                           ▼                                              ▼
-                    ┌─────────────┐                              ┌───────────────┐
-                    │  XGBoost /  │                              │   FastAPI     │
-                    │  LightGBM / │─────────────registers───────▶│  /predict     │
-                    │  RF / CNN   │                              │  /health      │
-                    └─────────────┘                              │  /metrics     │
-                                                                  └───────┬───────┘
-                                                                          │
-                                                          ┌───────────────┴───────────────┐
-                                                          ▼                                ▼
-                                                   ┌─────────────┐                ┌─────────────┐
-                                                   │ Prometheus  │                │    Drift    │
-                                                   │  + Grafana  │                │  Detector   │
-                                                   └─────────────┘                └─────────────┘
+## 2. System architecture
+
+```mermaid
+flowchart LR
+  hfHub["HF Hub dataset repo"] --> airflow["Airflow DAG<br/>host LocalExecutor"]
+  airflow --> spark["PySpark local mode<br/>feature extraction"]
+  spark --> mlflow["MLflow<br/>SQLite + Registry"]
+  airflow --> models["XGBoost / LightGBM<br/>RF / CNN"]
+  mlflow --> api["FastAPI<br/>/predict /health /metrics"]
+  models -->|"registers"| api
+  api --> prom["Prometheus + Grafana"]
+  api --> drift["Drift Detector"]
 ```
 
-Dataset and model versioning both live on Hugging Face Hub — the same public dataset repo as the UrbanSound8K mirror (`risan-raja-iitm/urbansound8K`), with pipeline outputs under `interim/` (later `processed/`), plus a separate model repo for trained artifacts. DVC stays in the repo as a documented, secondary versioning path but isn't the primary one. Airflow runs on the host (same venv as training, so ResNet can use MPS). Docker Compose runs the API, MLflow, Prometheus, and Grafana.
+**Host vs Compose:** Airflow and PySpark/training run in the project `.venv` on the host (so macOS training can use MPS). Docker Compose runs only the API, MLflow, Prometheus, and Grafana. The Airflow DAG expects Compose MLflow at `http://localhost:5001` — do not point two writers at the same SQLite MLflow file.
 
-LocalExecutor over Celery, PySpark in local mode instead of a separate Spark cluster, and the two-HF-repo versioning setup are explained in `docs/DESIGN.md`.
+| Service | How it runs | Port |
+| :--- | :--- | ---: |
+| FastAPI | Compose | 8000 |
+| MLflow UI | Compose | 5001 |
+| Airflow UI | Host (`make airflow`) | 8080 |
+| Prometheus | Compose | 9090 |
+| Grafana | Compose | 3000 |
 
-## Setup and installation
+## 3. Setup and installation
 
-Requires Python 3.13+, Java 17 (for PySpark), and Docker for the API/MLflow/monitoring stack.
+### Prerequisites
+
+| Tool | Notes |
+| :--- | :--- |
+| Python 3.13+ | `python3` / `python` on PATH |
+| [uv](https://docs.astral.sh/uv/getting-started/installation/) | Lockfile install (`uv.lock`) |
+| Java 17+ | Required for PySpark feature extraction |
+| Docker + `docker compose` (v2) | API / MLflow / monitoring (not needed for training alone) |
+| Hugging Face account | Dataset download and Hub pushes |
+
+### Recommended bootstrap
 
 ```bash
 git clone https://github.com/risan-raja/DA5402W-MLOps.git
 cd DA5402W-MLOps
-uv sync   # or: python3 -m venv .venv && source .venv/bin/activate && pip install -e .
+bash scripts/setup.sh
+# or: make setup
 ```
 
-You'll also need Hugging Face Hub credentials (`hf auth login`) — for downloading the dataset and for pushing dataset/model versions. No Kaggle account is needed.
+`scripts/setup.sh` detects the OS, checks Python ≥ 3.13, `uv`, and Java ≥ 17 (fails if missing), warns if Docker or HF auth is absent, runs `uv sync --locked --group dev`, and seeds `.env` from `.env.example` when `.env` is missing. It does **not** auto-install system packages.
 
-## Running the pipeline
-
-**Compose (API, MLflow, Prometheus, Grafana) and host Airflow:**
+### macOS / Linux
 
 ```bash
-make compose    # docker compose --env-file .env -f docker/docker-compose.yml up --build -d
-make airflow    # LocalExecutor UI on http://localhost:8080 (metadata in .airflow/)
+source .venv/bin/activate
 ```
 
-**Fetch the dataset:**
+On macOS, if `java -version` is still below 17 after Homebrew:
 
 ```bash
-hf download risan-raja-iitm/urbansound8K --repo-type dataset --local-dir data/raw
+brew install openjdk@17
+export JAVA_HOME="$(brew --prefix openjdk@17)"
+export PATH="$JAVA_HOME/bin:$PATH"
 ```
 
-**Feature extraction on its own:**
+Host training can use Apple MPS when available.
+
+### Windows
+
+**WSL2 (Ubuntu) is strongly preferred** — same commands as Linux after installing Python 3.13+, `uv`, JDK 17, and Docker Desktop’s WSL integration.
+
+Alternatively, run `bash scripts/setup.sh` from **Git Bash**. Activate with:
 
 ```bash
-python src/data_pipeline/spark_feature_extractor.py --input data/raw --output data/processed
-```
-Splitting is fold-based (the dataset's `fold` column, 1–10), matching UrbanSound8K's standard cross-validation protocol.
-
-**Model training with MLflow tracking:**
-
-```bash
-python src/models/train.py --config config/config.yaml
-mlflow ui --port 5000   # view runs, metrics, and the model registry
+source .venv/Scripts/activate
 ```
 
-**Data and model versioning:**
+Linux and Windows resolve PyTorch from the CPU wheel index in `pyproject.toml` (`pytorch-cpu`); macOS uses the default index (MPS-capable builds when available).
+
+### Manual fallback
 
 ```bash
-# Raw stays on upstream risan-raja-iitm/urbansound8K — do not re-upload.
+uv sync --locked --group dev
+cp .env.example .env   # if .env does not exist yet
+```
 
-# Dataset repo is the same as raw: risan-raja-iitm/urbansound8K
-# Push interim under interim/ (~1.8 GB). Do not re-upload raw parquet.
-python -m src.data_processing.versioning push data/interim interim
-# later, after Spark: python -m src.data_processing.versioning push data/processed processed
+### Auth
 
-# Pull (raw and/or interim) via the downloader:
+```bash
+hf auth login
+# or set HF_TOKEN=... in .env
+```
+
+## 4. Steps to run pipelines and services
+
+Activate the venv first (`source .venv/bin/activate` or Windows `source .venv/Scripts/activate`).
+
+**Dataset (HF Hub):**
+
+```bash
 python -m src.data_pipeline.dataset_downloader --target raw
 python -m src.data_pipeline.dataset_downloader --target interim
 python -m src.data_pipeline.dataset_downloader --target raw --target interim
+```
 
-# Models: risan-raja-iitm/urbansound8k-models (all four dirs, then winner last)
+**Feature extraction (PySpark, host):**
+
+```bash
+python -m src.data_pipeline.spark_feature_extractor --force
+# optional Hub upload: add --push, or set versioning.push_processed: true in config/config.yaml
+```
+
+Splits are fold-based (`fold` 1–10), not a random train/test split.
+
+**Training (MLflow):**
+
+```bash
+python -m src.models.train --config config/config.yaml
+# optional: --cv  (official 10-fold CV after Optuna)
+# optional: --models rf,xgboost,lightgbm,resnet18
+```
+
+With Compose up, point tracking at the server (`MLFLOW_TRACKING_URI=http://localhost:5001` in `.env` or via the Airflow wrapper). Host CLI can use `sqlite:///mlflow/mlflow.db` only when the Compose MLflow container is **not** writing the same file.
+
+**Compose + Airflow:**
+
+```bash
+make compose    # API :8000, MLflow :5001, Prometheus :9090, Grafana :3000
+make airflow    # LocalExecutor UI :8080 (metadata in .airflow/)
+```
+
+DAG training expects Compose MLflow at `http://localhost:5001`.
+
+**Versioning (HF; DVC secondary):**
+
+```bash
+# Do not re-upload raw. Push interim / processed under the same dataset repo.
+python -m src.data_processing.versioning push data/interim interim
+python -m src.data_processing.versioning push data/processed processed
+
 python -m src.data_processing.versioning push-models models
 python -m src.data_processing.versioning push-winner models
-make pull-winner   # winner.json + winner/ from the model repo into models/
+make pull-winner   # winner.json + winner/ into models/
 
-# DVC: kept as a documented alternative, local remote
+# Documented alternative:
 dvc add models/
 dvc push
 ```
 
-## API usage
-
-Once the container is running, the API is at `http://localhost:8000`:
+**Tests and lint:**
 
 ```bash
-# health check
+uv run pytest -q -m "not integration"
+uv run ruff check .
+```
+
+## 5. API usage
+
+With Compose running, the API is at `http://localhost:8000`:
+
+```bash
 curl http://localhost:8000/health
 
-# classify a clip
 curl -X POST http://localhost:8000/predict \
   -F "file=@data/sample_audio/dog_bark_sample.wav"
 
-# send 3 clips × 10 classes so Prometheus/Grafana record request rate + latency
 make demo-predict
-# fill the 100-prediction drift window, then scrape Grafana
-python -m src.deployment.demo --repeat 4
-# slower pass (15s scrape): python -m src.deployment.demo --repeat 2 --delay 1
+# more load for Grafana: python -m src.deployment.demo --repeat 4
 
-# Prometheus scrape target (includes drift_psi_class / drift_ks_confidence)
 curl http://localhost:8000/metrics
 
-# rebuild the fold-10 reference (adds feature histograms when processed/ exists)
 make drift-reference
-# score a prediction JSONL; writes predictions.jsonl from fold-10 labels if missing
 make drift-score
-# tabular feature PSI/KS (builds histograms into the reference if needed)
-python -m src.monitoring.drift_cli score-features data/processed/tabular.parquet --with-features
 ```
 
-`/predict` accepts a `.wav` file and returns the predicted class, confidence, `model_name`, `latency_ms`, and the 10-class `probabilities` map. Malformed, oversized, or non-`.wav` uploads return a structured error. If no winner is loaded, `/predict` returns 503 while `/health` stays 200.
+`/predict` returns class, confidence, `model_name`, `latency_ms`, and a 10-class `probabilities` map. Bad uploads return structured errors. If no winner is loaded, `/predict` is 503 while `/health` stays 200.
 
-The live drift monitor compares a rolling window of 100 predicted labels (PSI) and confidences (KS) to `models/drift_reference.json` (fold-10 class prior; optional confidence quantiles). Gauges stay unset until the window is full. Tabular feature PSI is offline-only: CNN serving does not extract the 84-D vector.
+Grafana: [http://localhost:3000](http://localhost:3000) — credentials from `.env` (`GF_SECURITY_ADMIN_USER` / `GF_SECURITY_ADMIN_PASSWORD`, defaults `admin` / `admin`). Open the provisioned **API Overview** dashboard.
 
-Grafana is at [http://localhost:3000](http://localhost:3000). Sign in with `GF_SECURITY_ADMIN_USER` / `GF_SECURITY_ADMIN_PASSWORD` from `.env` (defaults: `admin` / `admin`). Open the provisioned **API Overview** dashboard (request/latency panels plus class-mix PSI and confidence KS).
+## 6. Docker execution
 
-## Docker execution
+Use Compose **v2** (`docker compose`, not the legacy `docker-compose` binary):
 
 ```bash
-# API + MLflow + Prometheus + Grafana (Airflow is host-only: make airflow)
-docker-compose --env-file .env -f docker/docker-compose.yml up --build -d
+make compose
+# equivalent:
+# docker compose --env-file .env -f docker/docker-compose.yml up --build -d
 
-# check status
-docker-compose -f docker/docker-compose.yml ps
+docker compose --env-file .env -f docker/docker-compose.yml ps
+docker compose --env-file .env -f docker/docker-compose.yml logs -f api
 
-# tail API logs
-docker-compose -f docker/docker-compose.yml logs -f api
-
-# tear down
-docker-compose -f docker/docker-compose.yml down
+make compose-down
+# equivalent:
+# docker compose --env-file .env -f docker/docker-compose.yml down
 ```
 
-Service ports: API on `8000`, MLflow UI on `5001`, host Airflow UI on `8080`, Prometheus on `9090`, Grafana on `3000`.
+Airflow is **not** in Compose — use `make airflow` on the host.
 
-## Folder structure
+Ports: API `8000`, MLflow `5001`, Airflow `8080`, Prometheus `9090`, Grafana `3000`.
+
+## 7. Folder structure and dependencies
 
 ```
 DA5402W/
-├── airflow/            # DAG only (host Airflow; PROJECT_ROOT = repo root)
-├── Makefile            # make airflow / make compose / make drift-reference
-├── config/             # config.yaml, logging.yaml
-├── data/                # raw/ (upstream cache), interim/ (versioned), processed/, sample_audio/
-├── docker/             # Dockerfile.api, docker-compose.yml, prometheus/
-├── docs/               # design doc, course brief
-├── report/             # LaTeX technical report
+├── .github/workflows/   # CI: ruff, pytest, Docker build
+├── airflow/dags/        # Host Airflow DAG
+├── config/              # config.yaml, logging.yaml
+├── data/                # raw/, interim/, processed/, sample_audio/
+├── docker/              # Dockerfile.api, docker-compose.yml, prometheus/, grafana/
+├── docs/                # DESIGN.md, course brief
+├── models/              # Trained artifacts / winner (gitignored binaries)
+├── report/              # LaTeX technical report
+├── scripts/             # setup.sh, run_airflow.sh, …
 ├── src/
-│   ├── data_pipeline/      # dataset download, PySpark feature extraction
-│   ├── data_processing/    # augmentation, cleaning, preprocessing
-│   ├── models/             # baseline models, CNN, training, evaluation
-│   ├── deployment/         # FastAPI app + schemas
-│   └── monitoring/         # prediction/latency logging, drift detection
+│   ├── data_pipeline/       # download, PySpark features
+│   ├── data_processing/     # clean/augment, HF versioning
+│   ├── models/              # train / evaluate / Optuna
+│   ├── deployment/          # FastAPI app
+│   └── monitoring/          # logs + drift
 ├── tests/
-├── dvc.yaml
-└── pyproject.toml
+├── .env.example
+├── Makefile
+├── pyproject.toml
+├── uv.lock
+└── README.md
 ```
 
-Full stack and dependency list: `pyproject.toml`.
+Runtime and optional dependency groups are declared in [`pyproject.toml`](pyproject.toml); install from the lockfile with `uv sync --locked --group dev` (same as CI and `scripts/setup.sh`).

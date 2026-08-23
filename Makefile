@@ -1,7 +1,10 @@
 REPO := $(abspath .)
 export PYTHONPATH := $(REPO)
 
-.PHONY: airflow airflow-init compose compose-down pull-winner demo-predict drift-reference drift-score report figures
+.PHONY: setup airflow airflow-init compose compose-down pull-winner demo-predict drift-reference drift-score report figures
+
+setup:
+	bash $(REPO)/scripts/setup.sh
 
 airflow-init:
 	mkdir -p $(REPO)/.airflow
