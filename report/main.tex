@@ -1,0 +1,420 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\usepackage[hidelinks]{hyperref}
+
+\hyphenation{Urban-Sound Fast-API Air-flow Py-Spark Light-GBM Res-Net Hugging-Face}
+
+\begin{document}
+
+\title{An End-to-End MLOps Pipeline for Urban Sound Classification}
+
+\author{\IEEEauthorblockN{Risan Raja}
+\IEEEauthorblockA{Indian Institute of Technology Madras\\
+Chennai, India}}
+
+\maketitle
+
+\begin{abstract}
+This report describes a production-style machine learning operations (MLOps) system for ten-class urban sound event classification on UrbanSound8K.
+A host-side Apache Airflow DAG with LocalExecutor downloads parquet clips from Hugging Face Hub, cleans and augments waveforms, extracts tabular and log-mel features with PySpark in local mode, and trains four models under Optuna and MLflow: random forest, XGBoost, LightGBM, and a ResNet-18 convolutional network.
+The winning artifact is a ResNet-18 with holdout F1-macro $0.862$ and official 10-fold CV F1-macro $0.760\pm 0.045$.
+Dataset intermediates and trained weights are versioned on Hugging Face Hub.
+A FastAPI service inside Docker Compose exposes \texttt{/health}, \texttt{/metrics}, and \texttt{/predict}; Prometheus and Grafana scrape request, latency, class, and confidence series, and each prediction is written as structured JSON.
+GitHub Actions lint, test, and build the API image.
+The project was completed solo under an approved exception to the course team-size rule.
+\end{abstract}
+
+\begin{IEEEkeywords}
+MLOps, audio classification, Airflow, PySpark, MLflow, FastAPI, UrbanSound8K
+\end{IEEEkeywords}
+
+\section{Problem Statement}
+\label{sec:problem}
+
+Urban environments mix mechanical, social, and emergency sounds that a deployed classifier must name from a short waveform.
+The engineering problem is not only to beat a baseline on a public corpus.
+It is to move from a parquet dump to a served model with an audit trail: who trained what, on which fold split, with which hyperparameters, and how the live API behaves once the weights leave the laptop.
+
+This project treats UrbanSound8K classification as the use case for that lifecycle~\cite{salamon2014urbansound}.
+A clip arrives as a \texttt{.wav} upload; the service returns a class label, a confidence, the serving model name, end-to-end latency, and the full ten-class probability vector.
+Behind that contract sit an orchestrated data path, two feature families, four compared models, experiment tracking, remote versioning, containerized serving, and request-level monitoring.
+
+The course brief requires nine components: version control; an Airflow-orchestrated pipeline plus Spark, Kafka, or Beam; data processing; at least two compared models with MLflow; dataset and model versioning (DVC or equivalent); FastAPI or Flask plus Docker; logging and at least one of Prometheus, Kibana, drift detection, performance monitoring, or latency/prediction logging; CI/CD; and a README.
+The sections that follow map each of those requirements onto a concrete choice and, where the implementation diverges from a generic ``production'' template, explain why.
+Table~\ref{tab:brief} is the short form of that mapping.
+
+\begin{table}[!t]
+\renewcommand{\arraystretch}{1.12}
+\setlength{\tabcolsep}{2.5pt}
+\caption{Brief component versus what shipped}
+\label{tab:brief}
+\centering
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.28\columnwidth}
+                >{\raggedright\arraybackslash}p{0.66\columnwidth}}
+\toprule
+Brief item & This repo \\
+\midrule
+Git + Hub & Feature branches, semantic commits, GitHub remote \\
+Airflow + DE tool & Host LocalExecutor DAG; PySpark local UDFs \\
+Processing & Decode, resample, peak-norm; train-fold augment \\
+$\geq$2 models + MLflow & RF, XGBoost, LightGBM, ResNet-18; SQLite tracker \\
+Versioning & HF dataset prefixes + model repo (DVC documented) \\
+Serve + Docker & FastAPI three-route API in Compose \\
+Monitoring & Prometheus, Grafana, JSON prediction logs \\
+CI/CD & GitHub Actions: ruff, pytest, image build/push \\
+README & Architecture, setup, API, Docker, tree \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Dataset}
+\label{sec:dataset}
+
+UrbanSound8K contains $8{,}732$ labeled clips of at most four seconds, drawn from Freesound and grouped into ten classes: air conditioner, car horn, children playing, dog bark, drilling, engine idling, gun shot, jackhammer, siren, and street music~\cite{salamon2014urbansound}.
+Each row carries a \texttt{fold} integer in $\{1,\ldots,10\}$.
+Those folds are the official evaluation protocol: they keep recordings from the same source file out of both sides of a split, which a random shuffle does not.
+
+The pipeline does not clone the original archive as a git submodule and does not use the Kaggle mirror.
+It fetches a parquet conversion of the same clips from the public Hub dataset \texttt{risan-raja-iitm/urbansound8K} (a clone of \texttt{danavery/urbansound8K}, CC-BY-NC-4.0).
+Audio lives as Hugging Face \texttt{Audio} structs inside sixteen parquet shards~\cite{huggingface}.
+The verified columns are \texttt{audio} (bytes and path), \texttt{slice\_file\_name}, \texttt{fsID}, \texttt{start}, \texttt{end}, \texttt{salience}, \texttt{fold}, \texttt{classID}, and \texttt{class}.
+A downloader keyed on the Hub revision SHA writes a \texttt{.manifest.json} and validates row count ($8{,}732$), fold range, and class count before any later stage runs.
+A git submodule of the raw archive would have forced a multi-gigabyte clone plus \texttt{git-lfs} on every grader and CI runner; the Hub fetch keeps the git tree small and needs no Kaggle credentials.
+
+Raw parquet is treated as an upstream cache, not as this project's versioned dataset.
+The versioning claim in Section~\ref{sec:pipeline} applies to \emph{this} pipeline's interim waveforms, processed features, and model artifacts.
+Class counts are uneven (gun shot and car horn are the smallest), which is why training-fold augmentation exists and why macro-F1, not accuracy, is the selection metric.
+
+\section{System Architecture}
+\label{sec:arch}
+
+Figure~\ref{fig:arch} is the runtime map.
+Airflow and PySpark run on the host virtualenv.
+Docker Compose runs only the API, MLflow UI, Prometheus, and Grafana.
+That split is intentional.
+The brief requires Airflow; it does not require Airflow-in-Docker.
+Host LocalExecutor executes DAG callables in the same Python that trains ResNet-18, so Apple Silicon MPS is available and there is no second, CPU-only torch build inside a Linux container~\cite{airflow}.
+Celery, Redis, and Flower add failure modes without a second worker machine.
+
+PySpark is the second data-engineering tool~\cite{zaharia2010spark,zaharia2016spark}.
+It runs as \texttt{master=local[*]} (configured \texttt{local[2]} in \texttt{config/config.yaml}) inside a \texttt{PythonOperator}, not as a standalone cluster.
+Eight thousand short clips do not need a Spark cluster; the UDF surface stays the same if one is pointed at later.
+
+MLflow uses a SQLite backend store under \texttt{./mlflow/}, bind-mounted into the Compose service so host training and the container UI share one file~\cite{zaharia2018mlflow}.
+SQLite is a single-writer store: host training and the containerized \texttt{mlflow server} must not write the same file at once.
+The DAG therefore sets \texttt{MLFLOW\_TRACKING\_URI=http://localhost:5001} when the Compose tracker is up.
+
+Versioning is two Hub repositories.
+The dataset repo already holding raw parquet also receives \texttt{interim/} and later \texttt{processed/} prefixes.
+A separate \texttt{model}-type repo (\texttt{risan-raja-iitm/urbansound8k-models}) stores the four trained directories plus \texttt{winner.json} and \texttt{winner/}.
+The brief allows ``DVC or equivalent''; Hub dataset and model repos are the primary equivalent.
+DVC remains a documented fallback in the README, not the path the DAG pushes.
+
+\begin{figure*}[!t]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize\sffamily,
+  node distance=3.2mm and 4.2mm,
+  box/.style={draw, rounded corners=1.2pt, align=center, inner sep=3.5pt,
+              minimum height=9.2mm, minimum width=24mm, line width=0.5pt},
+  arr/.style={-{Stealth[length=2.1mm]}, thick},
+]
+\node[box] (hf) {HF dataset\\raw parquet};
+\node[box, right=of hf] (af) {Airflow\\LocalExecutor};
+\node[box, right=of af] (prep) {Clean + augment\\interim wavs};
+\node[box, right=of prep] (spk) {PySpark UDFs\\tabular + log-mel};
+\node[box, right=of spk] (trn) {Optuna trains\\RF / XGB / LGBM / CNN};
+\node[box, below=12mm of hf] (ver) {HF interim /\\processed};
+\node[box, below=12mm of af] (mlf) {MLflow\\SQLite + registry};
+\node[box, below=12mm of prep] (win) {Winner select\\+ HF model repo};
+\node[box, below=12mm of spk] (api) {FastAPI\\health / metrics / predict};
+\node[box, below=12mm of trn] (mon) {Prometheus\\+ Grafana};
+\draw[arr] (hf) -- (af);
+\draw[arr] (af) -- (prep);
+\draw[arr] (prep) -- (spk);
+\draw[arr] (spk) -- (trn);
+\draw[arr] (prep) -- (ver);
+\draw[arr] (spk) -- (mlf);
+\draw[arr] (trn) -- (mlf);
+\draw[arr] (trn) -- (win);
+\draw[arr] (mlf) -- (win);
+\draw[arr] (win) -- (api);
+\draw[arr] (api) -- (mon);
+\end{tikzpicture}
+\caption{Host Airflow and PySpark produce features and models; Compose serves the winner and scrapes metrics. Dataset intermediates and weights are pushed to Hugging Face Hub.}
+\label{fig:arch}
+\end{figure*}
+
+\section{Data Pipeline}
+\label{sec:pipeline}
+
+The DAG \texttt{audio\_classification} is manual (\texttt{schedule=None}).
+Its spine is
+\texttt{download\_raw} $\rightarrow$
+\texttt{preprocess\_interim} $\rightarrow$
+\texttt{push\_interim\_hf} $\rightarrow$
+\texttt{spark\_feature\_extraction} $\rightarrow$
+four parallel \texttt{train\_*} tasks $\rightarrow$
+\texttt{select\_winner} $\rightarrow$
+\texttt{push\_all\_models} $\rightarrow$
+\texttt{push\_winner}.
+Each callable changes into the repository root and imports the corresponding \texttt{src} module only inside the task body, so the scheduler can parse the DAG without loading torch or Spark.
+\texttt{preprocessing.enabled} and \texttt{spark.enabled} in \texttt{config.yaml} can turn the heavy stages into no-ops so a demo rerun reuses \texttt{data/interim} and \texttt{data/processed} instead of spending an hour re-deriving wavs.
+
+\subsection{Cleaning and augmentation}
+Raw clips arrive with mixed sample rates, mono or stereo channels, and occasional empty or silent payloads.
+The preprocessor decodes bytes with \texttt{soundfile}, rejects empty arrays, collapses stereo by mean, resamples to $16\,\mathrm{kHz}$ with librosa~\cite{mcfee2015librosa}, and peak-normalizes.
+Silent files (peak amplitude zero) raise; they are not imputed.
+That is the missing-value and cleaning path: corrupt or empty audio fails loudly rather than becoming a zero vector that later looks like a legitimate class.
+
+Fold 10 is the held-out evaluation fold during preprocessing and is never augmented.
+Training folds receive one extra copy per clip from an \texttt{audiomentations} compose of Gaussian noise, pitch shift of $\pm 2$ semitones, and time stretch in $[0.9, 1.1]$, each applied with probability $0.5$.
+Seeds are hashed from a base seed, clip key, and copy index so reruns are deterministic.
+The resulting wavs plus a \texttt{metadata.parquet} (including an \texttt{is\_augmented} flag) form \texttt{data/interim}.
+
+\subsection{PySpark feature extraction}
+The extractor starts a local SparkSession and maps each absolute wav path through a Python UDF~\cite{zaharia2016spark}.
+Every clip is padded or truncated to $4\,\mathrm{s}$.
+Two feature families are written:
+
+\textbf{Tabular.} Thirteen MFCCs and their first-order deltas, twelve chroma bins, spectral centroid, bandwidth, rolloff, and zero-crossing rate, each reduced to mean and standard deviation ($84$ scalars).
+These feed the tree models~\cite{pedregosa2011sklearn}.
+
+\textbf{Log-mel.} A $128\times 126$ log-mel spectrogram ($n_{\mathrm{fft}}=1024$, hop $512$) for the CNN, with per-dataset mean/variance stored for serving-time normalization.
+
+The same librosa helpers live in \texttt{src/data\_pipeline/audio\_features.py} so the API can rebuild features from an uploaded wav without importing PySpark.
+
+\subsection{Fold protocol at train time}
+Training reads processed parquet and applies the configured holdout:
+folds $1$--$8$ for fitting, fold $9$ for Optuna validation, fold $10$ for the reported eval metrics.
+When \texttt{training.cv.enabled} is true, the selected hyperparameters are re-evaluated under official 10-fold CV (train on nine folds, test on the held-out fold, rotate).
+Winner selection prefers \texttt{cv\_f1\_macro\_mean} when present, otherwise holdout F1-macro.
+
+\section{Model Development}
+\label{sec:models}
+
+Four models are trained, which is more than the brief's minimum of two, and they sit on two representations rather than two hyperparameter grids of the same learner.
+
+Random forest~\cite{breiman2001rf}, XGBoost~\cite{chen2016xgboost}, and LightGBM~\cite{ke2017lightgbm} consume the $84$-D tabular vector after a \texttt{StandardScaler} fit on the training folds only.
+Class-weight vectors derived from the Optuna training folds rebalance the minority gun-shot and car-horn rows during the tree fits.
+ResNet-18~\cite{he2016resnet} consumes the normalized log-mel as a single-channel image; ImageNet residual weights are fine-tuned for ten classes with early stopping patience $5$.
+
+Search spaces live in the training modules, not in \texttt{config.yaml}, so the config file stays a list of paths and fold integers.
+Optuna runs $20$ trials per model~\cite{akiba2019optuna}.
+Random forest searches $n_{\mathrm{estimators}}\in\{100,\ldots,400\}$, depth $4$--$24$, leaf size, and \texttt{max\_features}.
+XGBoost and LightGBM search tree depth, log-scaled learning rate, column/row subsample, and $L_2$ regularization; both use histogram tree methods so four parallel Airflow tasks stay on CPU without GPU contention.
+The CNN trial space is smaller on purpose: log-uniform learning rate in $[10^{-5}, 3\times 10^{-4}]$ and batch size $\{16,32\}$.
+A twenty-trial search over residual architecture would have blown the wall clock; the capacity is already in the pretrained trunk.
+
+After the best trial, the code refits on folds $1$--$9$ (train plus the Optuna val fold) and scores fold $10$.
+That refit is what \texttt{models/<name>/} and the MLflow registry actually store.
+Nested MLflow runs keep each Optuna trial visible under the parent study so a viva can open one experiment and see why LightGBM beat random forest without opening four notebook dumps.
+
+Table~\ref{tab:search} lists the searched knobs.
+The spaces are wide enough that twenty trials are a budget, not an exhaustive grid, which is the point of TPE search.
+
+\begin{table}[!t]
+\renewcommand{\arraystretch}{1.12}
+\setlength{\tabcolsep}{2.5pt}
+\caption{Optuna search spaces (20 trials each)}
+\label{tab:search}
+\centering
+\begin{tabular}{ll}
+\toprule
+Model & Tuned knobs \\
+\midrule
+RF & trees $100$--$400$; depth $4$--$24$; leaf; \texttt{max\_features} \\
+XGBoost & trees; depth $3$--$12$; $\eta$; subsample; $\lambda$ \\
+LightGBM & trees; depth; $\eta$; leaves $16$--$128$; min child \\
+ResNet-18 & $\eta\in[10^{-5},3\times10^{-4}]$; batch $\{16,32\}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Every trial logs parameters and the eval-fold metrics required by the brief: accuracy, macro precision, macro recall, macro F1, weighted F1, and one-vs-rest ROC-AUC, plus a confusion-matrix PNG.
+The fitted artifact, scaler or mel statistics, and label maps are written under \texttt{models/<name>/} and registered in MLflow.
+After the four \texttt{train\_*} tasks finish, \texttt{select\_winner} copies the best directory to \texttt{models/winner/}, writes \texttt{winner.json} (model name, scores, MLflow \texttt{run\_id}, dataset SHA), and tags the registry alias \texttt{production}.
+
+OpenMP and BLAS thread caps are loaded from \texttt{.env} in \texttt{src/models/runtime\_env.py} before sklearn, XGBoost, LightGBM, or torch import.
+Without that, four parallel Airflow train tasks over-subscribe the host and the CNN's MPS session fights the tree libraries for cores.
+
+\section{Deployment}
+\label{sec:deploy}
+
+The serving surface is three endpoints on FastAPI~\cite{fastapi}, containerized from \texttt{docker/Dockerfile.api} (\texttt{python:3.11-slim}) and published on host port $8000$.
+
+\texttt{/health} returns \texttt{\{"status": "ok"\}} even when weights failed to load, so an orchestrator can distinguish ``process up'' from ``model ready.''
+\texttt{/metrics} emits Prometheus text.
+\texttt{/predict} accepts a multipart \texttt{.wav}.
+Uploads over $8\,\mathrm{MiB}$, empty bodies, and files that are neither \texttt{.wav} by suffix nor \texttt{audio/wav} (and close aliases) by MIME are rejected with $400$ or $413$.
+A missing winner returns $503$.
+On success the body is the Pydantic model: \texttt{label}, \texttt{confidence}, \texttt{model\_name}, \texttt{latency\_ms}, and \texttt{probabilities}.
+
+Startup resolves artifacts in order: \texttt{models/winner/}, then \texttt{models/<name>/} from \texttt{winner.json}, then a Hub snapshot of the model repo into a cache directory.
+A CNN directory must contain \texttt{model.pt}, \texttt{mel\_stats.json}, and \texttt{label\_map.json}; a tabular directory must contain \texttt{model.joblib}, \texttt{scaler.joblib}, and \texttt{label\_map.json}.
+CNN and tabular families share \texttt{predict\_clip}: decode, resample, pad or truncate, then either a torch forward pass or a scaler-plus-tree \texttt{predict\_proba}.
+Compose bind-mounts \texttt{config/} and \texttt{models/} read-only and loads \texttt{.env}.
+\texttt{DA5402W\_CONFIG} and \texttt{DA5402W\_MODELS\_DIR} override those mounts when the same code is run under uvicorn on the host.
+A helper, \texttt{make demo-predict}, posts three UrbanSound8K clips per class so Grafana is not an empty shell during a demo.
+
+\section{Monitoring}
+\label{sec:monitor}
+
+The brief asks for logging plus one item from a five-option list.
+This stack implements three of those items: Prometheus scrape metrics, API latency histograms, and per-prediction JSON logs.
+Grafana is provisioned on top (not required by the brief) so a viva can show request rate, error ratio, p50/p95/p99 latency, predicted-class mix, mean confidence, and process CPU/memory without clicking through PromQL.
+
+Counters and histograms are \texttt{predict\_requests\_total}, \texttt{predict\_errors\_total}, \texttt{predict\_class\_total\{class\_name\}}, \texttt{predict\_latency\_seconds}, and \texttt{predict\_confidence}~\cite{rabenstein2015prometheus}.
+The API Overview dashboard is loaded from \texttt{docker/grafana/provisioning/} on container boot.
+Each request, success or failure, is also written to stdout as one JSON object with timestamp, status, label, confidence, model name, latency, and filename.
+
+A KS/PSI drift detector on logged features was part of the original design note and is still listed in the README tree.
+It is \emph{not} implemented.
+Monitoring for this submission is Prometheus + Grafana + structured prediction logs.
+Claiming distribution tests that are not in \texttt{src/monitoring/} would be a documentation lie; Section~\ref{sec:future} lists the detector as future work.
+
+\section{CI/CD}
+\label{sec:cicd}
+
+\texttt{.github/workflows/ci.yml} runs on pull requests and pushes to \texttt{main}.
+Three jobs chain: \texttt{ruff check}, \texttt{pytest -m "not integration"}, then a Docker build of \texttt{Dockerfile.api}.
+On \texttt{main} the image is pushed to GitHub Container Registry as \texttt{ghcr.io/<owner>/da5402w-api} with \texttt{latest} and git-SHA tags.
+PR builds verify the Dockerfile without publishing.
+
+Integration tests that hit the Hub or a live Spark session are marked and excluded so CI stays deterministic on a GitHub-hosted runner.
+The workflow does not boot the full Compose stack.
+A multi-service Airflow-plus-API boot inside that runner is a flake source that does not improve the Dockerfile check the brief actually needs.
+
+\section{Reproducibility}
+\label{sec:repro}
+
+The git tree is meant to be cloned without seven gigabytes of wavs.
+\texttt{uv sync} installs the lockfile; Java 17 is the only extra host package PySpark needs.
+\texttt{make compose} starts the API, MLflow on host port $5001$ (macOS AirPlay already owns $5000$), Prometheus, and Grafana.
+\texttt{make airflow} starts LocalExecutor with metadata in gitignored \texttt{.airflow/}.
+\texttt{make pull-winner} snapshots \texttt{winner.json} and \texttt{winner/} from the model repo if those directories are absent.
+
+A reader who only wants to score a clip never runs Spark.
+The serving container rebuilds features from the uploaded bytes with the shared librosa helpers, using the scaler or mel statistics that travelled with the winner.
+That is why feature code was lifted out of the Spark module: importing \texttt{pyspark} inside the slim API image would have pulled Java into a service that only needs numpy and librosa.
+
+Configuration is one YAML file.
+Fold lists, trial count, Spark heap, Hub repo ids, and push flags are all there.
+Secrets stay in \texttt{.env} (Hugging Face token, Grafana admin password).
+Grafana defaults to \texttt{admin}/\texttt{admin} when those variables are unset, which is acceptable for a local demo and would not be acceptable on a shared course server.
+
+\section{Results and Discussion}
+\label{sec:results}
+
+Table~\ref{tab:results} reports fold-$10$ holdout metrics after Optuna and the subsequent official 10-fold CV mean and standard deviation of macro-F1.
+Numbers are taken from \texttt{models/*/metrics.json}; they are not rounded marketing figures.
+
+\begin{table}[!t]
+\renewcommand{\arraystretch}{1.15}
+\setlength{\tabcolsep}{3pt}
+\caption{Holdout (fold 10) and 10-fold CV. Winner selected by CV F1-macro.}
+\label{tab:results}
+\centering
+\begin{tabular}{lcccc}
+\toprule
+Model & Acc. & F1-mac. & AUC & CV F1 \\
+\midrule
+RF & 0.720 & 0.721 & 0.956 & --- \\
+XGBoost & 0.771 & 0.776 & 0.961 & $0.689\pm 0.053$ \\
+LightGBM & 0.780 & 0.788 & 0.960 & $0.697\pm 0.054$ \\
+ResNet-18 & \textbf{0.848} & \textbf{0.862} & \textbf{0.987} & $\mathbf{0.760\pm 0.045}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+ResNet-18 is the winner on both the holdout F1-macro ($0.862$) and CV F1-macro ($0.760\pm 0.045$).
+Among tabular models LightGBM leads holdout F1 ($0.788$) and CV F1 ($0.697\pm 0.054$); XGBoost is close on CV ($0.689\pm 0.053$).
+Random forest is a usable baseline ($0.721$ holdout F1) but trails both boosters; that run's \texttt{metrics.json} has no CV block, so the table leaves the cell blank rather than inventing a number.
+
+The gap between holdout and CV is expected and is the reason CV exists in the DAG.
+Fold 10 happened to be a favorable eval slice; rotating the test fold drops macro-F1 by about $0.09$--$0.10$ and exposes fold-to-fold variance (ResNet CV std $0.045$).
+Reporting only fold 10 would have overstated deployed quality.
+Reporting only CV would have hidden that the Optuna objective (fold 9) and the published holdout (fold 10) still need a number a reader can recompute from \texttt{winner.json}.
+
+Figure~\ref{fig:cm-cnn} is the ResNet-18 holdout confusion matrix.
+The diagonal is dark for air conditioner, children playing, dog bark, drilling, engine idling, jackhammer, and street music.
+Car horn and gun shot are the minority classes and therefore lighter on a raw-count heatmap even when recall is acceptable.
+The visible mistakes are the ones UrbanSound8K papers usually report: siren leaking into children playing and dog bark; drilling exchanging mass with jackhammer; engine idling with air conditioner; street music with children playing.
+Those pairs overlap in spectrum and in the original recordings' background.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{figures/cm_resnet18.png}
+\caption{ResNet-18 holdout confusion matrix (fold 10). Mechanical pairs (drill/jackhammer, engine/AC) and siren versus vocal street scenes remain the main errors.}
+\label{fig:cm-cnn}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{figures/cm_lightgbm.png}
+\caption{LightGBM holdout confusion matrix. The same class pairs confuse the tabular model, with more siren$\rightarrow$children\_playing mass than ResNet-18.}
+\label{fig:cm-lgb}
+\end{figure}
+
+Figure~\ref{fig:cm-lgb} is LightGBM on the same fold.
+The error structure is the same family, with a thicker siren-to-children-playing off-diagonal.
+The CNN's extra $0.08$ holdout F1 is therefore not a mysterious lift: it reduces exactly the confusions that a bag of MFCC and chroma summaries cannot separate.
+
+Lineage in \texttt{winner.json} records the Hub dataset id, processed-set timestamp, tabular SHA, and MLflow run \texttt{c0057386aa71433883bf00dab8044e9f}.
+A later retrain that does not match that SHA is a different artifact, even if the class name is still \texttt{resnet18}.
+
+Reproducibility for a grader is then a short list rather than a research project: clone, \texttt{uv sync}, \texttt{make pull-winner} or a local \texttt{models/winner}, \texttt{make compose}, and \texttt{curl} a sample wav.
+Full training is optional; the Hub model repo is the artifact store the brief asked for.
+The DAG remains the path that created those artifacts, which is what the viva should walk, not a hidden notebook.
+
+\section{Challenges}
+\label{sec:challenges}
+
+Putting Airflow in Compose looked like the default ``production'' sketch and is the wrong default on this machine.
+A Linux API image cannot see MPS; a Celery worker in Docker would train ResNet on CPU and turn a twenty-trial CNN search into an overnight job.
+Host LocalExecutor plus a thin Compose file (API, tracker, scrape stack) was the combination that actually finished.
+
+PySpark on the host needed Java 17 and a small driver heap ($1\,\mathrm{g}$, $512\,\mathrm{m}$ result cap, two partitions, batch $512$).
+The first instinct---a large Spark driver---wasted RAM without raising throughput on $4\,\mathrm{s}$ wavs.
+The UDF already releases the GIL around librosa; parallelism comes from partitions, not from a $16\,\mathrm{g}$ heap.
+
+MLflow's SQLite file cannot have two writers.
+Early in development a host \texttt{mlflow ui} and the Compose server locked each other.
+The rule is now mechanical: either point training at \texttt{http://localhost:5001} or stop Compose before writing \texttt{sqlite:///mlflow/mlflow.db}.
+
+Four Optuna studies in parallel collide on OpenMP.
+Setting \texttt{OMP\_NUM\_THREADS} (and related knobs) in \texttt{.env} and importing them before the ML stack was the difference between a clean DAG run and a stall that looked like a Spark hang.
+
+Finally, the versioning sentence in the brief is easy to misread as ``put UrbanSound8K itself in DVC.''
+The raw Hub snapshot is someone else's dataset.
+What this project versions is interim audio, processed parquet, and the four model directories---the artifacts a teammate would need to reproduce the winner without re-deriving features from scratch.
+
+\section{Future Improvements}
+\label{sec:future}
+
+The next monitoring increment is the KS/PSI detector already named in the design note: compare live tabular features (or predicted-class frequencies) against the fold-10 reference and expose a Prometheus gauge.
+Grafana should grow alert rules on error ratio and p95 latency rather than remaining a demo dashboard.
+
+CI can gain a Compose smoke that hits \texttt{/health} and \texttt{/predict} with the checked-in sample wav, gated so it does not run on every PR.
+DVC as a second remote (local filesystem) is still only documented; wiring \texttt{dvc.yaml} stages that mirror the DAG would make the ``or equivalent'' claim bidirectional.
+
+On the model side, class-balanced sampling or a siren-specific augment would attack the off-diagonal that both figures share.
+The CNN already wins; the remaining errors are acoustic, not MLOps.
+
+\section*{Acknowledgment}
+The course brief requires teams of two to four students.
+This submission is solo work under an approved exception.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

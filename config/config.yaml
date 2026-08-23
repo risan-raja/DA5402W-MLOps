@@ -60,22 +60,22 @@ versioning:
 training:
   processed_dir: data/processed
   models_dir: models
-  mlflow_experiment: urbansound8K-v3
+  mlflow_experiment: urbansound8K-submission
   mlflow_tracking_uri: sqlite:///mlflow/mlflow.db
   mlflow_artifact_root: ./mlflow/artifacts
   train_folds: [1, 2, 3, 4, 5, 6, 7, 8]
   # train_folds: [1, 2]
   val_fold: 9
   eval_fold: 10
-  n_trials: 5
+  n_trials: 20
   # Official UrbanSound8K 10-fold eval CV (after Optuna). Off by default for fast iteration.
   cv:
     enabled: true
-    n_folds: 5
+    n_folds: 10
   seed: 42
   models: [rf, xgboost, lightgbm, resnet18]
   cnn:
-    epochs: 5
+    epochs: 10
     batch_size: 32
     patience: 5
     lr: 1.0e-4

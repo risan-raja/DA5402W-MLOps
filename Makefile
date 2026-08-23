@@ -1,7 +1,7 @@
 REPO := $(abspath .)
 export PYTHONPATH := $(REPO)
 
-.PHONY: airflow airflow-init compose compose-down pull-winner demo-predict
+.PHONY: airflow airflow-init compose compose-down pull-winner demo-predict report
 
 airflow-init:
 	mkdir -p $(REPO)/.airflow
@@ -26,3 +26,6 @@ pull-winner:
 
 demo-predict:
 	$(REPO)/.venv/bin/python -m src.deployment.demo --url http://localhost:8000
+
+report:
+	cd $(REPO)/report && pdflatex -interaction=nonstopmode main && bibtex main && pdflatex -interaction=nonstopmode main && pdflatex -interaction=nonstopmode main
