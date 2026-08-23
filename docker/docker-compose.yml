@@ -16,19 +16,21 @@ x-airflow-common: &airflow-common
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-da5402w-dev-jwt-secret-change-me}
     PYTHONPATH: /opt/airflow
     JAVA_HOME: /usr/lib/jvm/java-17
-    # Full HF push from the DAG is opt-in (heavy); local extract is the default.
-    PUSH_INTERIM: ${PUSH_INTERIM:-0}
-    PUSH_PROCESSED: ${PUSH_PROCESSED:-0}
+    # Compose MLflow service (overrides host sqlite from .env).
+    MLFLOW_TRACKING_URI: http://mlflow:5000
   volumes:
     - ../airflow/dags:/opt/airflow/dags
     - ../src:/opt/airflow/src
     - ../data:/opt/airflow/data
     - ../config:/opt/airflow/config
+    - ../models:/opt/airflow/models
     - airflow-logs:/opt/airflow/logs
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     postgres:
       condition: service_healthy
+    mlflow:
+      condition: service_started
 
 services:
   postgres:
@@ -80,6 +82,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      mlflow:
+        condition: service_started
 
   # Airflow 3+: DAG parsing is a separate process (scheduler no longer embeds it).
   airflow-dag-processor:

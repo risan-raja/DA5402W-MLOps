@@ -9,7 +9,13 @@ from src.data_pipeline.dataset_downloader import (
     raw_data_present,
     validate_schema,
 )
-from src.data_processing.versioning import env_flag_enabled
+from src.data_processing.versioning import (
+    TRAINED_MODEL_DIRS,
+    push_all_trained_models,
+    push_winner_artifacts,
+    resolve_model_repo_id,
+    versioning_push_enabled,
+)
 
 CONFIG = {
     "expected_rows": 4,
@@ -92,15 +98,69 @@ def test_raw_data_present_requires_manifest_and_parquet(tmp_path):
     assert raw_data_present(tmp_path) is True
 
 
-def test_env_flag_enabled(monkeypatch):
-    monkeypatch.delenv("PUSH_INTERIM", raising=False)
-    assert env_flag_enabled("PUSH_INTERIM") is False
-    monkeypatch.setenv("PUSH_INTERIM", "1")
-    assert env_flag_enabled("PUSH_INTERIM") is True
-    monkeypatch.setenv("PUSH_INTERIM", "true")
-    assert env_flag_enabled("PUSH_INTERIM") is True
-    monkeypatch.setenv("PUSH_INTERIM", "0")
-    assert env_flag_enabled("PUSH_INTERIM") is False
+def test_versioning_push_enabled(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "dataset:\n  hf_repo_id: example/repo\n"
+        "versioning:\n  push_interim: true\n  push_processed: false\n"
+        "  push_models: true\n"
+    )
+    assert versioning_push_enabled("push_interim", config_path=cfg) is True
+    assert versioning_push_enabled("push_processed", config_path=cfg) is False
+    assert versioning_push_enabled("push_models", config_path=cfg) is True
+    assert versioning_push_enabled("missing_key", config_path=cfg) is False
+
+
+def test_resolve_model_repo_id(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "dataset:\n  hf_repo_id: example/ds\n"
+        "versioning:\n  hf_model_repo_id: org/models\n  hf_model_repo_type: model\n"
+    )
+    assert resolve_model_repo_id(config_path=cfg) == ("org/models", "model")
+
+
+def test_resolve_model_repo_id_requires_id(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("dataset:\n  hf_repo_id: example/ds\nversioning:\n  path_in_repo: interim\n")
+    with pytest.raises(ValueError, match="hf_model_repo_id"):
+        resolve_model_repo_id(config_path=cfg)
+
+
+def test_push_all_trained_models_requires_each_dir(tmp_path):
+    (tmp_path / "rf").mkdir()
+    with pytest.raises(FileNotFoundError):
+        push_all_trained_models(tmp_path)
+
+
+def test_push_winner_artifacts_requires_json_and_dir(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        push_winner_artifacts(tmp_path)
+    (tmp_path / "winner.json").write_text("{}")
+    with pytest.raises(FileNotFoundError):
+        push_winner_artifacts(tmp_path)
+
+
+def test_push_all_trained_models_uploads_each_dir(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "dataset:\n  hf_repo_id: example/ds\n"
+        "versioning:\n  hf_model_repo_id: org/models\n  hf_model_repo_type: model\n"
+    )
+    models_dir = tmp_path / "models"
+    for name in TRAINED_MODEL_DIRS:
+        (models_dir / name).mkdir(parents=True)
+    uploaded: list[str] = []
+
+    def _fake_push(local_dir, path_in_repo, **_kwargs):
+        uploaded.append(path_in_repo)
+        return "ok"
+
+    monkeypatch.setattr(
+        "src.data_processing.versioning.push_model_tree", _fake_push
+    )
+    push_all_trained_models(models_dir, config_path=cfg)
+    assert uploaded == list(TRAINED_MODEL_DIRS)
 
 
 @pytest.mark.integration

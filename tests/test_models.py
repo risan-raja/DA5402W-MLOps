@@ -12,6 +12,7 @@ import torch.nn.functional as F
 
 from src.data_pipeline.spark_feature_extractor import tabular_feature_names
 from src.models.cnn_model import build_resnet18, mel_to_3ch
+from src.models.cross_validation import aggregate_fold_metrics
 from src.models.data import (
     build_label_maps,
     class_weight_vector,
@@ -19,6 +20,7 @@ from src.models.data import (
     filter_split,
     fit_mel_stats,
     fit_scaler,
+    iter_us8k_cv_folds,
     normalize_mels,
     sample_weights_from_y,
     split_frames,
@@ -27,7 +29,17 @@ from src.models.data import (
 )
 from src.models.evaluate import compute_metrics
 from src.models.runtime_env import _THREAD_DEFAULTS, load_runtime_env
-from src.models.train import ALL_MODELS, run_training
+from src.models.train import (
+    ALL_MODELS,
+    materialize_winner_dir,
+    persist_run_result,
+    result_score,
+    run_training,
+    select_winner,
+    select_winner_from_artifacts,
+    train_one_model,
+    winner_payload,
+)
 
 
 def _synthetic_tabular(n_per_fold: int = 4) -> pd.DataFrame:
@@ -167,6 +179,107 @@ def test_run_training_import_and_all_models():
     assert "rf" in ALL_MODELS
     assert "resnet18" in ALL_MODELS
     assert callable(run_training)
+    assert callable(train_one_model)
+
+
+def test_result_score_prefers_cv_mean():
+    assert result_score({"metrics": {"f1_macro": 0.9, "cv_f1_macro_mean": 0.5}}) == 0.5
+    assert result_score({"metrics": {"f1_macro": 0.8}}) == 0.8
+    assert result_score({"metrics": {}}) == float("-inf")
+
+
+def test_winner_payload_includes_cv_and_lineage():
+    payload = winner_payload(
+        {
+            "model_name": "xgboost",
+            "run_id": "abc",
+            "metrics": {
+                "f1_macro": 0.6,
+                "cv_f1_macro_mean": 0.7,
+                "cv_f1_macro_std": 0.01,
+            },
+        },
+        {
+            "hf_repo_id": "org/ds",
+            "processed_created_at": "t0",
+            "tabular": {"sha256": "deadbeef"},
+        },
+    )
+    assert payload["model_name"] == "xgboost"
+    assert payload["cv_f1_macro_mean"] == 0.7
+    assert payload["dataset"]["tabular_sha256"] == "deadbeef"
+
+
+def test_select_winner_writes_json_and_copies_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.models.train.tag_mlflow_winners", lambda *a, **k: None)
+    (tmp_path / "rf").mkdir()
+    (tmp_path / "rf" / "model.joblib").write_text("rf-weights")
+    (tmp_path / "xgboost").mkdir()
+    (tmp_path / "xgboost" / "model.joblib").write_text("xgb-weights")
+    results = [
+        {
+            "model_name": "rf",
+            "run_id": "a",
+            "metrics": {"f1_macro": 0.4},
+            "out_dir": str(tmp_path / "rf"),
+        },
+        {
+            "model_name": "xgboost",
+            "run_id": "b",
+            "metrics": {"cv_f1_macro_mean": 0.7, "f1_macro": 0.6},
+            "out_dir": str(tmp_path / "xgboost"),
+        },
+    ]
+    lineage = {
+        "hf_repo_id": "org/ds",
+        "processed_created_at": "t0",
+        "tabular": {"sha256": "abc"},
+    }
+    winner = select_winner(results, tmp_path, lineage)
+    assert winner["model_name"] == "xgboost"
+    written = (tmp_path / "winner.json").read_text()
+    assert "xgboost" in written
+    assert (tmp_path / "winner" / "model.joblib").read_text() == "xgb-weights"
+    dest = materialize_winner_dir(tmp_path, "rf")
+    assert dest.name == "winner"
+    assert (dest / "model.joblib").read_text() == "rf-weights"
+
+
+def test_select_winner_from_artifacts(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.models.train.tag_mlflow_winners", lambda *a, **k: None)
+    monkeypatch.setattr("src.models.train.ensure_mlflow", lambda cfg: None)
+    models_dir = tmp_path / "models"
+    lineage = {
+        "hf_repo_id": "org/ds",
+        "processed_created_at": "t0",
+        "tabular": {"sha256": "abc"},
+    }
+    for name, score in (("rf", 0.2), ("xgboost", 0.9)):
+        out = models_dir / name
+        out.mkdir(parents=True)
+        persist_run_result(
+            {
+                "model_name": name,
+                "run_id": name,
+                "metrics": {"f1_macro": score},
+                "out_dir": str(out),
+            },
+            lineage,
+        )
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "training:\n"
+        f"  models_dir: {models_dir}\n"
+        "  models: [rf, xgboost]\n"
+        "  mlflow_tracking_uri: sqlite:///unused.db\n"
+        f"  mlflow_artifact_root: {tmp_path / 'mlruns'}\n"
+        "  processed_dir: unused\n"
+    )
+    winner = select_winner_from_artifacts(
+        config_path=cfg, models=["rf", "xgboost"]
+    )
+    assert winner["model_name"] == "xgboost"
+    assert (models_dir / "winner.json").is_file()
 
 
 def test_train_resnet_history_has_val_metrics():
@@ -199,3 +312,23 @@ def test_train_resnet_history_has_val_metrics():
         value = history[key]
         assert not math.isnan(value)
         assert 0.0 <= value <= 1.0
+
+def test_iter_us8k_cv_folds_disjoint():
+    pairs = list(iter_us8k_cv_folds(10))
+    assert len(pairs) == 10
+    for test_fold, train_folds in pairs:
+        assert test_fold not in train_folds
+        assert len(train_folds) == 9
+        assert set(train_folds) | {test_fold} == set(range(1, 11))
+
+
+def test_aggregate_fold_metrics_mean_std():
+    folds = [
+        {"fold": 1, "f1_macro": 0.5, "accuracy": 0.6},
+        {"fold": 2, "f1_macro": 0.7, "accuracy": 0.8},
+    ]
+    agg = aggregate_fold_metrics(folds)
+    assert abs(agg["cv_f1_macro_mean"] - 0.6) < 1e-9
+    assert abs(agg["cv_accuracy_mean"] - 0.7) < 1e-9
+    assert agg["cv_f1_macro_std"] >= 0.0
+

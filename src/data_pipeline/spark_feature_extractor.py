@@ -434,7 +434,7 @@ def extract_features(
         json.dump(manifest, f, indent=2)
     logger.info("Wrote processed features: %s", manifest)
 
-    should_push = push or os.environ.get("PUSH_PROCESSED", "").strip() in {"1", "true", "True"}
+    should_push = push or bool(full.get("versioning", {}).get("push_processed", False))
     if should_push:
         path_in_repo = full.get("versioning", {}).get("processed_path_in_repo", "processed")
         push_dataset_tree(processed_dir, path_in_repo)

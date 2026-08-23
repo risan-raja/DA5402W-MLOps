@@ -20,11 +20,14 @@ from src.models.cnn_model import (
 from src.models.cnn_model import (
     predict_proba as cnn_predict_proba,
 )
+from src.models.cross_validation import aggregate_fold_metrics, log_cv_results
 from src.models.data import (
     build_label_maps,
     class_weight_vector,
     encode_labels,
+    filter_split,
     fit_mel_stats,
+    iter_us8k_cv_folds,
     mels_array,
     normalize_mels,
     split_frames,
@@ -206,10 +209,62 @@ def train_resnet_model(
         model_cpu = model.cpu().eval()
         mlflow.pytorch.log_model(
             model_cpu,
-            artifact_path="model",
+            name="model",
             serialization_format="pt2",
             input_example=example,
         )
+
+
+        cv_cfg = train_cfg.get("cv") or {}
+        if cv_cfg.get("enabled"):
+            n_folds = int(cv_cfg.get("n_folds", 10))
+            cv_label_to_id, _ = build_label_maps(mels_df["class"])
+            cv_n_classes = len(cv_label_to_id)
+            fold_rows: list[dict] = []
+            logger.info("Running UrbanSound8K %s-fold eval CV for resnet18", n_folds)
+            for test_fold, cv_train_folds in iter_us8k_cv_folds(n_folds):
+                train_df = filter_split(
+                    mels_df, cv_train_folds, include_augmented=True
+                )
+                test_df = filter_split(
+                    mels_df, [test_fold], include_augmented=False
+                )
+                x_tr_cv, y_tr_cv = _xy_mels(train_df, cv_label_to_id)
+                x_te_cv, y_te_cv = _xy_mels(test_df, cv_label_to_id)
+                fold_stats = fit_mel_stats(x_tr_cv)
+                x_tr_cv_n = normalize_mels(x_tr_cv, fold_stats)
+                x_te_cv_n = normalize_mels(x_te_cv, fold_stats)
+                cw_cv = class_weight_vector(y_tr_cv, cv_n_classes)
+                fold_model, _ = train_resnet(
+                    x_tr_cv_n,
+                    y_tr_cv,
+                    None,
+                    None,
+                    class_weights=cw_cv,
+                    epochs=epochs_run,
+                    batch_size=batch_size,
+                    lr=lr,
+                    patience=patience,
+                    seed=seed,
+                    pretrained=True,
+                    early_stop=False,
+                )
+                proba_cv = cnn_predict_proba(
+                    fold_model, x_te_cv_n, batch_size=batch_size
+                )
+                pred_cv = np.argmax(proba_cv, axis=1)
+                fold_metrics = compute_metrics(
+                    y_te_cv,
+                    pred_cv,
+                    y_proba=proba_cv,
+                    labels=list(range(cv_n_classes)),
+                )
+                fold_rows.append({"fold": int(test_fold), **fold_metrics})
+            aggregate = aggregate_fold_metrics(fold_rows)
+            metrics.update(aggregate)
+            log_cv_results(fold_rows, aggregate, out_dir)
+            save_json(out_dir / "metrics.json", metrics)
+            mlflow.log_artifact(str(out_dir / "metrics.json"))
 
         register_and_tag(
             "resnet18",

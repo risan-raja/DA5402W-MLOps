@@ -11,11 +11,14 @@ from mlflow.models import infer_signature
 
 import mlflow
 from src.models.baseline_model import fit_predict_proba, suggest_params
+from src.models.cross_validation import aggregate_fold_metrics, log_cv_results
 from src.models.data import (
     build_label_maps,
     class_weight_vector,
     feature_columns,
+    filter_split,
     fit_scaler,
+    iter_us8k_cv_folds,
     sample_weights_from_y,
     split_frames,
     tabular_xy,
@@ -169,6 +172,53 @@ def train_tabular_model(
 
         signature = infer_signature(x_ev_s[:5], proba[:5])
         log_sklearn_family_model(model_name, model, signature)
+
+
+        cv_cfg = train_cfg.get("cv") or {}
+        if cv_cfg.get("enabled"):
+            n_folds = int(cv_cfg.get("n_folds", 10))
+            # Global label map so fold-local class gaps do not renumber IDs.
+            cv_label_to_id, _ = build_label_maps(tabular["class"])
+            cv_n_classes = len(cv_label_to_id)
+            fold_rows: list[dict] = []
+            logger.info(
+                "Running UrbanSound8K %s-fold eval CV for %s", n_folds, model_name
+            )
+            for test_fold, cv_train_folds in iter_us8k_cv_folds(n_folds):
+                train_df = filter_split(
+                    tabular, cv_train_folds, include_augmented=True
+                )
+                test_df = filter_split(
+                    tabular, [test_fold], include_augmented=False
+                )
+                x_tr_cv, y_tr_cv = tabular_xy(train_df, feat_cols, cv_label_to_id)
+                x_te_cv, y_te_cv = tabular_xy(test_df, feat_cols, cv_label_to_id)
+                fold_scaler = fit_scaler(x_tr_cv)
+                x_tr_cv_s = transform_features(fold_scaler, x_tr_cv)
+                x_te_cv_s = transform_features(fold_scaler, x_te_cv)
+                cw_cv = class_weight_vector(y_tr_cv, cv_n_classes)
+                sw_cv = sample_weights_from_y(y_tr_cv, cw_cv)
+                _, pred_cv, proba_cv = fit_predict_proba(
+                    model_name,
+                    best_params,
+                    x_tr_cv_s,
+                    y_tr_cv,
+                    x_te_cv_s,
+                    sample_weight=sw_cv,
+                    n_classes=cv_n_classes,
+                )
+                fold_metrics = compute_metrics(
+                    y_te_cv,
+                    pred_cv,
+                    y_proba=proba_cv,
+                    labels=list(range(cv_n_classes)),
+                )
+                fold_rows.append({"fold": int(test_fold), **fold_metrics})
+            aggregate = aggregate_fold_metrics(fold_rows)
+            metrics.update(aggregate)
+            log_cv_results(fold_rows, aggregate, out_dir)
+            save_json(out_dir / "metrics.json", metrics)
+            mlflow.log_artifact(str(out_dir / "metrics.json"))
 
         register_and_tag(
             model_name,

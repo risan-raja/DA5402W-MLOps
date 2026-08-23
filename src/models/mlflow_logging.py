@@ -214,11 +214,10 @@ def register_and_tag(
 
 
 def log_sklearn_family_model(model_name: str, model, signature) -> None:
-    # Use artifact_path so runs:/{id}/model works with Model Registry (MLflow 3
-    # `name=` alone does not create the classic run artifact tree).
+    # name="model" keeps runs:/{id}/model resolvable for Model Registry.
     if model_name == "rf":
-        mlflow.sklearn.log_model(model, artifact_path="model", signature=signature)
+        mlflow.sklearn.log_model(model, name="model", signature=signature)
     elif model_name == "xgboost":
-        mlflow.xgboost.log_model(model, artifact_path="model", signature=signature)
+        mlflow.xgboost.log_model(model, name="model", signature=signature)
     else:
-        mlflow.lightgbm.log_model(model, artifact_path="model", signature=signature)
+        mlflow.lightgbm.log_model(model, name="model", signature=signature)

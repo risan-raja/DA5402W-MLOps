@@ -99,8 +99,9 @@ python -m src.data_pipeline.dataset_downloader --target raw
 python -m src.data_pipeline.dataset_downloader --target interim
 python -m src.data_pipeline.dataset_downloader --target raw --target interim
 
-# Models: pushed to an HF Hub model repo
-hf upload <hf-username>/<model-repo> models/ --repo-type model
+# Models: risan-raja-iitm/urbansound8k-models (all four dirs, then winner last)
+python -m src.data_processing.versioning push-models models
+python -m src.data_processing.versioning push-winner models
 
 # DVC: kept as a documented alternative, local remote
 dvc add models/

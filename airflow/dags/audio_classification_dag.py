@@ -8,16 +8,18 @@ from airflow.operators.python import PythonOperator
 
 from airflow import DAG
 
-# Airflow mounts the repo pieces under /opt/airflow/{dags,src,data,config}.
+# Airflow mounts the repo pieces under /opt/airflow/{dags,src,data,config,models}.
 AIRFLOW_HOME = Path("/opt/airflow")
 if str(AIRFLOW_HOME) not in sys.path:
     sys.path.insert(0, str(AIRFLOW_HOME))
 
 logger = logging.getLogger(__name__)
 
+TRAIN_MODELS = ("rf", "xgboost", "lightgbm", "resnet18")
+
 
 # Callables import src modules inside the function body so the DAG file stays
-# parseable without loading PySpark / librosa / audiomentations at scheduler start.
+# parseable without loading PySpark / librosa / audiomentations / torch at scheduler start.
 def run_download_raw() -> None:
     os.chdir(AIRFLOW_HOME)
     from src.data_pipeline.dataset_downloader import download_dataset, raw_data_present
@@ -38,10 +40,10 @@ def run_preprocess_interim() -> None:
 
 def run_push_interim_hf() -> None:
     os.chdir(AIRFLOW_HOME)
-    from src.data_processing.versioning import env_flag_enabled, push_dataset_tree
+    from src.data_processing.versioning import push_dataset_tree, versioning_push_enabled
 
-    if not env_flag_enabled("PUSH_INTERIM"):
-        logger.info("PUSH_INTERIM not set; skipping interim Hub upload")
+    if not versioning_push_enabled("push_interim"):
+        logger.info("versioning.push_interim is false; skipping interim Hub upload")
         return
     push_dataset_tree(AIRFLOW_HOME / "data" / "interim", path_in_repo="interim")
 
@@ -49,9 +51,49 @@ def run_push_interim_hf() -> None:
 def run_spark_feature_extraction() -> None:
     os.chdir(AIRFLOW_HOME)
     from src.data_pipeline.spark_feature_extractor import extract_features
-    from src.data_processing.versioning import env_flag_enabled
+    from src.data_processing.versioning import versioning_push_enabled
 
-    extract_features(force=True, push=env_flag_enabled("PUSH_PROCESSED"))
+    extract_features(force=True, push=versioning_push_enabled("push_processed"))
+
+
+def run_train_model(model_name: str) -> None:
+    os.chdir(AIRFLOW_HOME)
+    from src.models.train import train_one_model
+
+    train_one_model(model_name)
+
+
+def run_select_winner() -> None:
+    os.chdir(AIRFLOW_HOME)
+    from src.models.train import select_winner_from_artifacts
+
+    select_winner_from_artifacts()
+
+
+def run_push_all_models() -> None:
+    os.chdir(AIRFLOW_HOME)
+    from src.data_processing.versioning import (
+        push_all_trained_models,
+        versioning_push_enabled,
+    )
+
+    if not versioning_push_enabled("push_models"):
+        logger.info("versioning.push_models is false; skipping model Hub upload")
+        return
+    push_all_trained_models(AIRFLOW_HOME / "models")
+
+
+def run_push_winner() -> None:
+    os.chdir(AIRFLOW_HOME)
+    from src.data_processing.versioning import (
+        push_winner_artifacts,
+        versioning_push_enabled,
+    )
+
+    if not versioning_push_enabled("push_models"):
+        logger.info("versioning.push_models is false; skipping winner Hub upload")
+        return
+    push_winner_artifacts(AIRFLOW_HOME / "models")
 
 
 with DAG(
@@ -59,7 +101,7 @@ with DAG(
     start_date=datetime(2026, 1, 1, tzinfo=UTC),
     schedule=None,
     catchup=False,
-    tags=["mlops", "preprocess", "spark", "versioning"],
+    tags=["mlops", "preprocess", "spark", "training", "versioning"],
 ) as dag:
     download_raw = PythonOperator(
         task_id="download_raw",
@@ -77,5 +119,34 @@ with DAG(
         task_id="spark_feature_extraction",
         python_callable=run_spark_feature_extraction,
     )
+    train_tasks = [
+        PythonOperator(
+            task_id=f"train_{name}",
+            python_callable=run_train_model,
+            op_kwargs={"model_name": name},
+        )
+        for name in TRAIN_MODELS
+    ]
+    select_winner = PythonOperator(
+        task_id="select_winner",
+        python_callable=run_select_winner,
+    )
+    push_all_models = PythonOperator(
+        task_id="push_all_models",
+        python_callable=run_push_all_models,
+    )
+    push_winner = PythonOperator(
+        task_id="push_winner",
+        python_callable=run_push_winner,
+    )
 
-    download_raw >> preprocess_interim >> push_interim_hf >> spark_feature_extraction
+    (
+        download_raw
+        >> preprocess_interim
+        >> push_interim_hf
+        >> spark_feature_extraction
+        >> train_tasks
+        >> select_winner
+        >> push_all_models
+        >> push_winner
+    )

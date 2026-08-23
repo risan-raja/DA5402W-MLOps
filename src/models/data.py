@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -221,3 +222,16 @@ def split_frames(
     refit = filter_split(frame, [*train_folds, val_fold], include_augmented=True)
     eval_df = filter_split(frame, [eval_fold], include_augmented=False)
     return optuna_train, val, refit, eval_df
+
+def iter_us8k_cv_folds(n_folds: int = 10) -> Iterator[tuple[int, list[int]]]:
+    """Yield ``(test_fold, train_folds)`` for official UrbanSound8K fold CV.
+
+    For each fold ``k`` in ``1..n_folds``, train on all other folds and evaluate on ``k``.
+    """
+    if n_folds < 2:
+        raise ValueError(f"n_folds must be >= 2, got {n_folds}")
+    folds = list(range(1, n_folds + 1))
+    for test_fold in folds:
+        train_folds = [f for f in folds if f != test_fold]
+        yield test_fold, train_folds
+
