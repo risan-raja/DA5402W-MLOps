@@ -2,7 +2,7 @@
 
 End-to-end MLOps pipeline for classifying urban sounds (UrbanSound8K): PySpark feature extraction, four Optuna-tuned models with MLflow tracking, FastAPI serving, host Airflow orchestration, and Prometheus / Grafana / drift monitoring.
 
-Design decisions and rationale: [`docs/DESIGN.md`](docs/DESIGN.md).
+
 
 ## 1. Project overview
 
